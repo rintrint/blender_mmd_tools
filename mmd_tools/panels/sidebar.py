@@ -235,6 +235,14 @@ class MMDToolsModelSetupPanel(bpy.types.Panel):
         row.operator('mmd_tools.edge_preview_setup', text='', icon='TRASH').action = 'CLEAN'
         row = grid.row(align=True)
         row.operator('mmd_tools.convert_materials', text='Convert to Blender', icon='BLENDER')
+        row = grid.row(align=True)
+        row.operator('mmd_tools.import_material_preset', text='Import Preset', icon='BLENDER')
+        row.operator('mmd_tools.export_material_preset', text='Export Preset', icon='BLENDER')
+        row = grid.row(align=True)
+        row.prop(context.scene.preset_options, "dir_path")
+        row = grid.row(align=True)
+        row.operator('mmd_tools.switch_material_preset', text='Switch Preset', icon='BLENDER')
+        row.operator('mmd_tools.active_material_preset', text='Active Preset', icon='BLENDER')
 
     def draw_misc(self, context, mmd_root_object):
         col = self.layout.column(align=True)

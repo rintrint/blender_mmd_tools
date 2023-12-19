@@ -63,7 +63,7 @@ class BuildRig(Operator):
         name='Non-Collision Distance Scale',
         description='The distance scale for creating extra non-collision constraints while building physics',
         min=0, soft_max=10,
-        default=1.5,
+        default=0,
     )
 
     collision_margin: bpy.props.FloatProperty(

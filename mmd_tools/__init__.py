@@ -104,6 +104,9 @@ def register():
     bpy.app.translations.register(bl_info['name'], translation_dict)
 
     operators.addon_updater.register_updater(bl_info, __file__)
+    
+    scene = bpy.types.Scene
+    scene.preset_options = bpy.props.PointerProperty(type=preset_options.PresetOptions)
 
 def unregister():
     operators.addon_updater.unregister_updater()
@@ -122,6 +125,8 @@ def unregister():
     bpy.app.handlers.save_pre.remove(save_pre_handler)
     properties.unregister()
     auto_load.unregister()
+    
+    del bpy.types.Scene.preset_options
 
 if __name__ == "__main__":
     register()

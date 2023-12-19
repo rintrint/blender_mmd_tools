@@ -229,7 +229,7 @@ class ImportVmd(Operator, ImportHelper):
         name='Margin',
         description='How many frames added before motion starting',
         min=0,
-        default=5,
+        default=10,
         )
     bone_mapper: bpy.props.EnumProperty(
         name='Bone Mapper',

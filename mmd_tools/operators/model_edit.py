@@ -67,13 +67,13 @@ class ModelJoinByBonesOperator(bpy.types.Operator):
 
         if parent_root_object is None or len(child_root_objects) == 0:
             raise MessageException("No MMD Models selected")
-
+        
         with activate_layer_collection(parent_root_object):
             FnModel.join_models(parent_root_object, child_root_objects)
-
+        
         bpy.ops.object.mode_set(mode='EDIT')
         bpy.ops.armature.parent_set(type='OFFSET')
-
+        
         # Connect child bones
         if self.join_type == 'CONNECTED':
             parent_edit_bone: bpy.types.EditBone = context.active_bone
