@@ -1,0 +1,9 @@
+MMD Tools Installation Guide
+============================
+  
+Please follow the URL below to install MMD Tools 
+请按照下面的网址来安装MMD Tools 
+- https://mmd-blender.fandom.com/wiki/MMD_Tools 
+ 
+次のURLに従ってMMD Toolsをインストールしてください 
+- https://mmd-blender.fandom.com/ja/wiki/MMD_Tools 
