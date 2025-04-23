@@ -826,8 +826,6 @@ class PMXImporter:
         self.__fixRepeatedMorphName()
 
         types = args.get("types", set())
-        clean_model = args.get("clean_model", False)
-        remove_doubles = args.get("remove_doubles", False)
         self.__scale = args.get("scale", 1.0)
         self.__use_mipmap = args.get("use_mipmap", True)
         self.__sph_blend_factor = args.get("sph_blend_factor", 1.0)
@@ -848,10 +846,6 @@ class PMXImporter:
         self.__createObjects()
 
         if "MESH" in types:
-            if clean_model:
-                _PMXCleaner.clean(self.__model, "MORPHS" not in types)
-            if remove_doubles:
-                self.__vertex_map = _PMXCleaner.remove_doubles(self.__model, "MORPHS" not in types)
             self.__createMeshObject()
             self.__importVertices()
             self.__importMaterials()

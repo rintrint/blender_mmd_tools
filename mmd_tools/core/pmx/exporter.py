@@ -917,45 +917,6 @@ class __PmxExporter:
         return n
 
     @staticmethod
-    def __triangulate(mesh, custom_normals):
-        bm = bmesh.new()
-        bm.from_mesh(mesh)
-
-        is_triangulated = True
-        face_verts_to_loop_id_map = {}
-
-        loop_id = 0
-        for f in bm.faces:
-            vert_to_loop_id = face_verts_to_loop_id_map.setdefault(f, {})
-            if is_triangulated and len(f.verts) != 3:
-                is_triangulated = False
-            for v in f.verts:
-                vert_to_loop_id[v] = loop_id
-                loop_id += 1
-
-        loop_normals, face_indices = None, None
-        if is_triangulated:
-            loop_normals = custom_normals
-        else:
-            face_map = bmesh.ops.triangulate(bm, faces=bm.faces, quad_method="FIXED", ngon_method="EAR_CLIP")["face_map"]
-            logging.debug(" - Remapping custom normals...")
-            loop_normals, face_indices = [], []
-            for f in bm.faces:
-                f_orig = face_map.get(f, f)
-                face_indices.append(f_orig.index)
-                vert_to_loop_id = face_verts_to_loop_id_map[f_orig]
-                for v in f.verts:
-                    loop_normals.append(custom_normals[vert_to_loop_id[v]])
-            logging.debug("   - Done (faces:%d)", len(bm.faces))
-            bm.to_mesh(mesh)
-            face_map.clear()
-        face_verts_to_loop_id_map.clear()
-        bm.free()
-
-        assert len(loop_normals) == len(mesh.loops)
-        return loop_normals, face_indices
-
-    @staticmethod
     def __get_normals(mesh, matrix):
         logging.debug(" - Get normals...")
         custom_normals = [(matrix @ cn.vector).normalized() for cn in mesh.corner_normals]
@@ -984,7 +945,8 @@ class __PmxExporter:
         _to_mesh_clear = lambda obj, mesh: obj.to_mesh_clear()
 
         base_mesh = _to_mesh(meshObj)
-        loop_normals, face_indices = self.__triangulate(base_mesh, self.__get_normals(base_mesh, normal_matrix))
+        loop_normals = self.__get_normals(base_mesh, normal_matrix)
+        face_indices = None
         base_mesh.transform(pmx_matrix)
 
         def _get_weight(vertex_group_index, vertex, default_weight):
