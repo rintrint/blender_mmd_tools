@@ -124,10 +124,15 @@ class ImportPmx(Operator, ImportHelper):
         description="Apply bone's fixed axis to be blender suitable",
         default=False,
     )
+    limit_bone_name_length: bpy.props.BoolProperty(
+        name="Limit Bone Names Length",
+        description="Limit bone names to 15 bytes in ShiftJIS or less for VMD compatibility",
+        default=False,
+    )
     rename_bones: bpy.props.BoolProperty(
         name="Rename Bones - L / R Suffix",
         description="Use Blender naming conventions for Left / Right paired bones",
-        default=True,
+        default=False,
     )
     use_underscore: bpy.props.BoolProperty(
         name="Rename Bones - Use Underscore",
@@ -200,6 +205,7 @@ class ImportPmx(Operator, ImportHelper):
                 fix_IK_links=self.fix_IK_links,
                 ik_loop_factor=self.ik_loop_factor,
                 apply_bone_fixed_axis=self.apply_bone_fixed_axis,
+                limit_bone_name_length=self.limit_bone_name_length,
                 rename_LR_bones=self.rename_bones,
                 use_underscore=self.use_underscore,
                 translator=self.__translator,
@@ -252,7 +258,7 @@ class ImportVmd(Operator, ImportHelper):
     rename_bones: bpy.props.BoolProperty(
         name="Rename Bones - L / R Suffix",
         description="Use Blender naming conventions for Left / Right paired bones",
-        default=True,
+        default=False,
     )
     use_underscore: bpy.props.BoolProperty(
         name="Rename Bones - Use Underscore",
@@ -302,6 +308,7 @@ class ImportVmd(Operator, ImportHelper):
 
         layout.prop(self, "bone_mapper")
         if self.bone_mapper == "RENAMED_BONES":
+            layout.prop(self, "limit_bone_name_length")
             layout.prop(self, "rename_bones")
             layout.prop(self, "use_underscore")
             layout.prop(self, "dictionary")
@@ -383,7 +390,7 @@ class ImportVpd(Operator, ImportHelper):
     rename_bones: bpy.props.BoolProperty(
         name="Rename Bones - L / R Suffix",
         description="Use Blender naming conventions for Left / Right paired bones",
-        default=True,
+        default=False,
     )
     use_underscore: bpy.props.BoolProperty(
         name="Rename Bones - Use Underscore",

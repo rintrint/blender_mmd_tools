@@ -794,6 +794,26 @@ class PMXImporter:
             mesh.normals_split_custom_set_from_vertices(custom_normals)
         logging.info("   - Done!!")
 
+    def __limitBoneNameLength(self):
+        pose_bones = self.__armObj.pose.bones
+        count = 0
+        for bone in pose_bones:
+            if len(bone.name.encode("shift_jis")) > 15:
+                # name = bone.name
+                # new_name = ""
+                # for char in name:
+                #     test_name = new_name + char
+                #     if len(test_name.encode("shift_jis")) <= 10:
+                #         new_name = test_name
+                #     else:
+                #         break
+                # if new_name.endswith("_"):
+                #     new_name = new_name + str(count)
+                # else:
+                #     new_name = new_name + "_" + str(count)
+                self.__rig.renameBone(bone.name, str(count))
+                count += 1
+
     def __renameLRBones(self, use_underscore):
         pose_bones = self.__armObj.pose.bones
         for i in pose_bones:
@@ -859,6 +879,8 @@ class PMXImporter:
                 self.__createMeshObject()
                 self.__importVertexGroup()
             self.__importBones()
+            if args.get("limit_bone_name_length", False):
+                self.__limitBoneNameLength()
             if args.get("rename_LR_bones", False):
                 use_underscore = args.get("use_underscore", False)
                 self.__renameLRBones(use_underscore)

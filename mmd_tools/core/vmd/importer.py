@@ -40,7 +40,7 @@ class _MirrorMapper:
 
 
 class RenamedBoneMapper:
-    def __init__(self, armObj=None, rename_LR_bones=True, use_underscore=False, translator=None):
+    def __init__(self, armObj=None, rename_LR_bones=False, use_underscore=False, translator=None):
         self.__pose_bones = armObj.pose.bones if armObj else None
         self.__rename_LR_bones = rename_LR_bones
         self.__use_underscore = use_underscore
