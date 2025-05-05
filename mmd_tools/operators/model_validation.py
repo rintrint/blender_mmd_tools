@@ -21,6 +21,8 @@ try:
 except ImportError:
     is_opencc_available = False
 
+OPENCC_WARNING = "Please install OpenCC in MMD Tools Preferences for better results."
+
 
 # Scene property to store validation results
 def register():
@@ -267,7 +269,7 @@ class MMDModelFixBoneIssues(Operator):
         processed_names = set()
 
         if not is_opencc_available:
-            fixed.append("Please install OpenCC in Add-on Preferences for better results.")
+            fixed.append(OPENCC_WARNING)
 
         # First collect all names and mark duplicates
         for pose_bone in armature.pose.bones:
@@ -377,7 +379,7 @@ class MMDModelFixMorphIssues(Operator):
         morph_types = ["vertex_morphs", "group_morphs", "bone_morphs", "material_morphs", "uv_morphs"]
 
         if not is_opencc_available:
-            fixed.append("Please install OpenCC in Add-on Preferences for better results.")
+            fixed.append(OPENCC_WARNING)
 
         for morph_type in morph_types:
             if not hasattr(root.mmd_root, morph_type):
