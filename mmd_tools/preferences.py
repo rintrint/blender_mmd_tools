@@ -1,13 +1,13 @@
 # Copyright 2022 MMD Tools authors
 # This file is part of MMD Tools.
 
-import os
-import sys
-import subprocess
 import importlib
+import os
+import subprocess
+import sys
+
 import bpy
 from bpy.props import BoolProperty, StringProperty
-
 
 # ===== Dependency Management System =====
 
