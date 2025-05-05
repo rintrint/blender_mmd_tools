@@ -12,6 +12,13 @@ from bpy.types import Operator
 from ..core.model import FnModel
 from ..core.material import FnMaterial
 
+try:
+    from opencc import OpenCC
+
+    is_opencc_available = True
+except ImportError:
+    is_opencc_available = False
+
 
 # Scene property to store validation results
 def register():
@@ -257,6 +264,9 @@ class MMDModelFixBoneIssues(Operator):
         name_counts = {}
         processed_names = set()
 
+        if not is_opencc_available:
+            fixed.append("Please install OpenCC in Add-on Preferences for better results.")
+
         # First collect all names and mark duplicates
         for pose_bone in armature.pose.bones:
             if getattr(pose_bone, "is_mmd_shadow_bone", False):
@@ -288,8 +298,17 @@ class MMDModelFixBoneIssues(Operator):
                 continue
 
             # First convert/remove non-Japanese characters
+            if is_opencc_available:
+                cc = OpenCC("s2t")
+                converted_name = cc.convert(original_name)
+                cc = OpenCC("t2jp")
+                converted_name = cc.convert(converted_name)
+            else:
+                # OpenCC not installed, just use the original name
+                converted_name = original_name
+
             new_name = ""
-            for char in original_name:
+            for char in converted_name:
                 try:
                     char.encode("shift_jis")
                     new_name += char
@@ -357,6 +376,9 @@ class MMDModelFixMorphIssues(Operator):
         processed_names = set()
         morph_types = ["vertex_morphs", "group_morphs", "bone_morphs", "material_morphs", "uv_morphs"]
 
+        if not is_opencc_available:
+            fixed.append("Please install OpenCC in Add-on Preferences for better results.")
+
         for morph_type in morph_types:
             if not hasattr(root.mmd_root, morph_type):
                 continue
@@ -380,8 +402,17 @@ class MMDModelFixMorphIssues(Operator):
                     continue
 
                 # First convert/remove non-Japanese characters
+                if is_opencc_available:
+                    cc = OpenCC("s2t")
+                    converted_name = cc.convert(original_name)
+                    cc = OpenCC("t2jp")
+                    converted_name = cc.convert(converted_name)
+                else:
+                    # OpenCC not installed, just use the original name
+                    converted_name = original_name
+
                 new_name = ""
-                for char in original_name:
+                for char in converted_name:
                     try:
                         char.encode("shift_jis")
                         new_name += char
