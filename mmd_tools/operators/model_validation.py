@@ -15,6 +15,8 @@ from ..core.material import FnMaterial
 try:
     from opencc import OpenCC
 
+    cc_s2t = OpenCC("s2t")
+    cc_t2jp = OpenCC("t2jp")
     is_opencc_available = True
 except ImportError:
     is_opencc_available = False
@@ -299,10 +301,8 @@ class MMDModelFixBoneIssues(Operator):
 
             # First convert/remove non-Japanese characters
             if is_opencc_available:
-                cc = OpenCC("s2t")
-                converted_name = cc.convert(original_name)
-                cc = OpenCC("t2jp")
-                converted_name = cc.convert(converted_name)
+                converted_name = cc_s2t.convert(original_name)
+                converted_name = cc_t2jp.convert(converted_name)
             else:
                 # OpenCC not installed, just use the original name
                 converted_name = original_name
@@ -403,10 +403,8 @@ class MMDModelFixMorphIssues(Operator):
 
                 # First convert/remove non-Japanese characters
                 if is_opencc_available:
-                    cc = OpenCC("s2t")
-                    converted_name = cc.convert(original_name)
-                    cc = OpenCC("t2jp")
-                    converted_name = cc.convert(converted_name)
+                    converted_name = cc_s2t.convert(original_name)
+                    converted_name = cc_t2jp.convert(converted_name)
                 else:
                     # OpenCC not installed, just use the original name
                     converted_name = original_name
