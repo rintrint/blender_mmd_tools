@@ -19,9 +19,22 @@ try:
     cc_t2jp = OpenCC("t2jp")
     is_opencc_available = True
 except ImportError:
+
+    class DummyConverter:
+        def convert(self, input):
+            return input
+
+    cc_s2t = DummyConverter()
+    cc_t2jp = DummyConverter()
     is_opencc_available = False
 
 OPENCC_WARNING = "Please install OpenCC in MMD Tools Preferences for better results."
+
+
+def get_opencc_warning():
+    if not is_opencc_available:
+        return OPENCC_WARNING
+    return None
 
 
 # Scene property to store validation results
@@ -268,8 +281,9 @@ class MMDModelFixBoneIssues(Operator):
         name_counts = {}
         processed_names = set()
 
-        if not is_opencc_available:
-            fixed.append(OPENCC_WARNING)
+        opencc_warning = get_opencc_warning()
+        if opencc_warning:
+            fixed.append(opencc_warning)
 
         # First collect all names and mark duplicates
         for pose_bone in armature.pose.bones:
@@ -302,12 +316,8 @@ class MMDModelFixBoneIssues(Operator):
                 continue
 
             # First convert/remove non-Japanese characters
-            if is_opencc_available:
-                converted_name = cc_s2t.convert(original_name)
-                converted_name = cc_t2jp.convert(converted_name)
-            else:
-                # OpenCC not installed, just use the original name
-                converted_name = original_name
+            converted_name = cc_s2t.convert(original_name)
+            converted_name = cc_t2jp.convert(converted_name)
 
             new_name = ""
             for char in converted_name:
@@ -378,8 +388,9 @@ class MMDModelFixMorphIssues(Operator):
         processed_names = set()
         morph_types = ["vertex_morphs", "group_morphs", "bone_morphs", "material_morphs", "uv_morphs"]
 
-        if not is_opencc_available:
-            fixed.append(OPENCC_WARNING)
+        opencc_warning = get_opencc_warning()
+        if opencc_warning:
+            fixed.append(opencc_warning)
 
         for morph_type in morph_types:
             if not hasattr(root.mmd_root, morph_type):
@@ -404,12 +415,8 @@ class MMDModelFixMorphIssues(Operator):
                     continue
 
                 # First convert/remove non-Japanese characters
-                if is_opencc_available:
-                    converted_name = cc_s2t.convert(original_name)
-                    converted_name = cc_t2jp.convert(converted_name)
-                else:
-                    # OpenCC not installed, just use the original name
-                    converted_name = original_name
+                converted_name = cc_s2t.convert(original_name)
+                converted_name = cc_t2jp.convert(converted_name)
 
                 new_name = ""
                 for char in converted_name:
