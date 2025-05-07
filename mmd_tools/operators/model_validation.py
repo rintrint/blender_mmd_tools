@@ -11,6 +11,10 @@ from bpy.types import Operator
 
 from ..core.material import FnMaterial
 from ..core.model import FnModel
+from ..externals.opencc import OpenCC
+
+cc_s2t = OpenCC("s2t")
+cc_t2jp = OpenCC("t2jp")
 
 try:
     from opencc import OpenCC
