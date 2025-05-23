@@ -30,6 +30,12 @@ class MMDToolsAddonPreferences(bpy.types.AddonPreferences):
         subtype="DIR_PATH",
         default=os.path.dirname(__file__),
     )
+    default_vmd_margin: bpy.props.IntProperty(
+        name="Default VMD Import Margin",
+        description="Default number of frames to add before the motion starts when importing VMD files",
+        min=0,
+        default=0,
+    )
 
     def draw(self, _context):
         layout: bpy.types.UILayout = self.layout  # pylint: disable=no-member
@@ -37,3 +43,7 @@ class MMDToolsAddonPreferences(bpy.types.AddonPreferences):
         layout.prop(self, "shared_toon_folder")
         layout.prop(self, "base_texture_folder")
         layout.prop(self, "dictionary_folder")
+
+        row = layout.row()
+        row.label(text="Default VMD Import Margin:")
+        row.prop(self, "default_vmd_margin", text="")

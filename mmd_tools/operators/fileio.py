@@ -58,6 +58,18 @@ def _update_types(cls, prop):
         cls.types = types  # trigger update
 
 
+def get_addon_package_name():
+    """Get the root package name for addon preferences"""
+    current_package = __package__
+    parts = current_package.split(".")
+    try:
+        index = parts.index("mmd_tools")
+        return ".".join(parts[: index + 1])
+    except ValueError:
+        pass
+    return current_package
+
+
 class ImportPmx(Operator, ImportHelper):
     bl_idname = "mmd_tools.import_model"
     bl_label = "Import Model File (.pmd, .pmx)"
@@ -227,6 +239,8 @@ class ImportVmd(Operator, ImportHelper):
     filename_ext = ".vmd"
     filter_glob: bpy.props.StringProperty(default="*.vmd", options={"HIDDEN"})
 
+    _preferences_applied = False
+
     scale: bpy.props.FloatProperty(
         name="Scale",
         description="Scaling factor for importing the motion",
@@ -236,7 +250,7 @@ class ImportVmd(Operator, ImportHelper):
         name="Margin",
         description="Number of frames to add before the motion starts (only applies if current frame is 1)",
         min=0,
-        default=5,
+        default=0,
     )
     bone_mapper: bpy.props.EnumProperty(
         name="Bone Mapper",
@@ -251,7 +265,7 @@ class ImportVmd(Operator, ImportHelper):
     rename_bones: bpy.props.BoolProperty(
         name="Rename Bones - L / R Suffix",
         description="Use Blender naming conventions for Left / Right paired bones",
-        default=True,
+        default=False,
     )
     use_underscore: bpy.props.BoolProperty(
         name="Rename Bones - Use Underscore",
@@ -333,6 +347,21 @@ class ImportVmd(Operator, ImportHelper):
         layout.prop(self, "detect_lamp_changes")
 
         layout.prop(self, "update_scene_settings")
+
+    def invoke(self, context, event):
+        """Load default value from preferences on first dialog open"""
+        # Use class variable to ensure this only runs once
+        if not ImportVmd._preferences_applied:
+            try:
+                addon_package = get_addon_package_name()
+                addon_prefs = context.preferences.addons.get(addon_package)
+                if addon_prefs and hasattr(addon_prefs.preferences, "default_vmd_margin"):
+                    self.margin = addon_prefs.preferences.default_vmd_margin
+            except (AttributeError, KeyError, TypeError):
+                pass
+            ImportVmd._preferences_applied = True
+
+        return super().invoke(context, event)
 
     def execute(self, context):
         selected_objects = set(context.selected_objects)
