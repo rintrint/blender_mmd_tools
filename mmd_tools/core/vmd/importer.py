@@ -591,28 +591,46 @@ class VMDImporter:
                 r2.co = (frame, curr_rot[2])
                 r3.co = (frame, curr_rot[-1])
 
-                # === 添加调试输出 - 开始 ===
+                # === 在导入时添加调试输出 - 开始 ===
                 # 检查是否为目标骨骼和帧
-                if name == "両目" and k.frame_number == 3235:
+                if name == "右足ＩＫ" and k.frame_number == 327:
                     print(f"=== VMD导入调试 - 骨骼: {name}, 帧: {k.frame_number} ===")
                     print(f"原始VMD旋转数据: {k.rotation}")
                     print(f"转换后旋转数据: {curr_rot}")
-                    print(f"原始VMD插值数据: {k.interp}")
+                    print(f"原始VMD插值数据 (64字节): {k.interp}")
                     
-                    # 输出旋转相关的插值数据（从64字节插值数组中提取旋转部分）
-                    # VMD插值数组格式：每个轴有16字节，顺序为X,Y,Z,旋转
-                    rotation_interp = k.interp[48:64]  # 旋转插值数据在48-63字节
-                    print(f"旋转插值原始数据: {rotation_interp}")
+                    # 根据VMD格式正确提取各轴插值控制点
+                    # X轴: 索引 0, 4, 8, 12
+                    # Y轴: 索引 1, 5, 9, 13 (x_x1在索引16重复)
+                    # Z轴: 索引 17, 6, 10, 14
+                    # R轴: 索引 18, 7, 11, 15
                     
-                    # 解析旋转插值控制点
-                    # 格式：[x1, y1, x2, y2] * 4 (对应4个旋转分量)
-                    for i, axis_name in enumerate(['RX', 'RY', 'RZ', 'RW']):
-                        start_idx = i * 4
-                        ctrl_points = rotation_interp[start_idx:start_idx+4]
-                        print(f"旋转{axis_name}插值控制点: {ctrl_points}")
+                    interp = k.interp
+                    x_x1, x_y1, x_x2, x_y2 = interp[0], interp[4], interp[8], interp[12]
+                    y_x1, y_y1, y_x2, y_y2 = interp[1], interp[5], interp[9], interp[13]  # y_x1也在interp[16]
+                    z_x1, z_y1, z_x2, z_y2 = interp[17], interp[6], interp[10], interp[14]
+                    r_x1, r_y1, r_x2, r_y2 = interp[18], interp[7], interp[11], interp[15]
+                    
+                    print(f"VMD插值控制点解析:")
+                    print(f"  X轴插值: [{x_x1}, {x_y1}, {x_x2}, {x_y2}] (索引: 0, 4, 8, 12)")
+                    print(f"  Y轴插值: [{y_x1}, {y_y1}, {y_x2}, {y_y2}] (索引: 1, 5, 9, 13)")
+                    print(f"  Z轴插值: [{z_x1}, {z_y1}, {z_x2}, {z_y2}] (索引: 17, 6, 10, 14)")
+                    print(f"  R轴插值: [{r_x1}, {r_y1}, {r_x2}, {r_y2}] (索引: 18, 7, 11, 15)")
+                    
+                    # 验证重复值
+                    print(f"数据验证:")
+                    print(f"  Y轴x1重复检查: interp[1]={interp[1]}, interp[16]={interp[16]} (应该相等)")
+                    
+                    # 显示完整的64字节数据分组（每16字节一行）
+                    print(f"完整64字节插值数据:")
+                    for i in range(4):
+                        start = i * 16
+                        end = start + 16
+                        group = interp[start:end]
+                        print(f"  第{i+1}行 (字节{start:2d}-{end-1:2d}): {group}")
                     
                     print("=" * 50)
-                # === 添加调试输出 - 结束 ===
+                # === 在导入时添加调试输出 - 结束 ===
 
                 curr_kps = (x, y, z, r0, r1, r2, r3)
                 if prev_kps is not None:
@@ -620,19 +638,37 @@ class VMDImporter:
                     for idx, prev_kp, kp in zip(indices, prev_kps, curr_kps):
                         self.__setInterpolation(interp[idx : idx + 16 : 4], prev_kp, kp)
                         
-                        # === 添加插值设置后的调试输出 - 开始 ===
-                        # 检查旋转插值设置后的状态
-                        if name == "両目" and k.frame_number == 3235:
-                            if idx >= 48:  # 旋转相关的插值
-                                axis_idx = (idx - 48) // 16
-                                axis_names = ['RX', 'RY', 'RZ', 'RW']
-                                if axis_idx < len(axis_names):
-                                    bezier_data = interp[idx : idx + 16 : 4]
-                                    print(f"设置{axis_names[axis_idx]}插值后 - Bezier数据: {bezier_data}")
-                                    print(f"  -> 前一关键帧插值类型: {prev_kp.interpolation}")
-                                    print(f"  -> 前一关键帧右手柄: {prev_kp.handle_right}")
-                                    print(f"  -> 当前关键帧左手柄: {kp.handle_left}")
-                        # === 添加插值设置后的调试输出 - 结束 ===
+                        # === 在插值设置后添加调试输出 - 开始 ===
+                        # 在设置插值的循环中添加
+                        if name == "右足ＩＫ" and k.frame_number == 327:
+                            if prev_kps is not None:
+                                interp = k.interp
+                                print(f"插值设置过程:")
+                                # indices = tuple(converter.convert_interpolation((0, 16, 32))) + (48,) * len(bone_rotation)
+                                # 这里的indices是指向VMD插值数据的起始位置，每次取16字节中的每4个字节
+                                
+                                axis_info = [
+                                    ("X位置", 0),   # 从索引0开始，每4个取一个: 0, 4, 8, 12
+                                    ("Y位置", 16),  # 从索引16开始，每4个取一个: 16, 20, 24, 28 (但实际数据在1,5,9,13)
+                                    ("Z位置", 32),  # 从索引32开始，每4个取一个: 32, 36, 40, 44
+                                    ("RX旋转", 48), # 从索引48开始，每4个取一个: 48, 52, 56, 60
+                                    ("RY旋转", 48), # 旋转都使用同一个插值
+                                    ("RZ旋转", 48),
+                                    ("RW旋转", 48)
+                                ]
+                                
+                                for i, (prev_kp, kp) in enumerate(zip(prev_kps, curr_kps)):
+                                    if i < len(axis_info):
+                                        axis_name, idx = axis_info[i]
+                                        # 提取对应的插值数据 (每4个字节取一个，间隔为4)
+                                        bezier_data = interp[idx : idx + 16 : 4]
+                                        print(f"  {axis_name} - 起始索引{idx}: VMD数据{bezier_data}")
+                                        print(f"    -> 设置后插值类型: {prev_kp.interpolation}")
+                                        if prev_kp.interpolation == "BEZIER":
+                                            print(f"    -> 前帧右手柄: {prev_kp.handle_right}")
+                                            print(f"    -> 当前帧左手柄: {kp.handle_left}")
+                                print("=" * 30)
+                        # === 在插值设置后添加调试输出 - 结束 ===
                         
                 prev_kps = curr_kps
 
