@@ -236,7 +236,7 @@ class ImportVmd(Operator, ImportHelper):
         name="Margin",
         description="Number of frames to add before the motion starts (only applies if current frame is 1)",
         min=0,
-        default=5,
+        default=0,
     )
     bone_mapper: bpy.props.EnumProperty(
         name="Bone Mapper",
@@ -251,7 +251,7 @@ class ImportVmd(Operator, ImportHelper):
     rename_bones: bpy.props.BoolProperty(
         name="Rename Bones - L / R Suffix",
         description="Use Blender naming conventions for Left / Right paired bones",
-        default=True,
+        default=False,
     )
     use_underscore: bpy.props.BoolProperty(
         name="Rename Bones - Use Underscore",

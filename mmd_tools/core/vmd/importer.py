@@ -135,12 +135,13 @@ class _FnBezier:
     @classmethod
     def from_fcurve(cls, kp0, kp1):
         p0, p1, p2, p3 = kp0.co, kp0.handle_right, kp1.handle_left, kp1.co
-        if p1.x > p3.x:
-            t = (p3.x - p0.x) / (p1.x - p0.x)
-            p1 = (1 - t) * p0 + p1 * t
-        if p0.x > p2.x:
-            t = (p3.x - p0.x) / (p3.x - p2.x)
-            p2 = (1 - t) * p3 + p2 * t
+        # # Clamp for using Cardano's cubic formula
+        # if p1.x > p3.x:
+        #     t = (p3.x - p0.x) / (p1.x - p0.x)
+        #     p1 = (1 - t) * p0 + p1 * t
+        # if p0.x > p2.x:
+        #     t = (p3.x - p0.x) / (p3.x - p2.x)
+        #     p2 = (1 - t) * p3 + p2 * t
         return cls(p0, p1, p2, p3)
 
     def __init__(self, p0, p1, p2, p3):  # assuming VMD's bezier or F-Curve's bezier
@@ -176,13 +177,14 @@ class _FnBezier:
     def evaluate_by_x(self, x):
         return self.evaluate(self.axis_to_t(x))
 
-    def axis_to_t(self, val, axis=0):
-        p0, p1, p2, p3 = self._p0[axis], self._p1[axis], self._p2[axis], self._p3[axis]
-        a = p3 - p0 + 3 * (p1 - p2)
-        b = 3 * (p0 - 2 * p1 + p2)
-        c = 3 * (p1 - p0)
-        d = p0 - val
-        return next(self.__find_roots(a, b, c, d))
+    # def axis_to_t(self, val, axis=0):
+    #     """Find parameter t using Cardano's cubic formula"""
+    #     p0, p1, p2, p3 = self._p0[axis], self._p1[axis], self._p2[axis], self._p3[axis]
+    #     a = p3 - p0 + 3 * (p1 - p2)
+    #     b = 3 * (p0 - 2 * p1 + p2)
+    #     c = 3 * (p1 - p0)
+    #     d = p0 - val
+    #     return next(self.__find_roots(a, b, c, d))
 
     def find_critical(self):
         p0, p1, p2, p3 = self._p0.y, self._p1.y, self._p2.y, self._p3.y
@@ -247,6 +249,104 @@ class _FnBezier:
             if 0 <= t <= 1:
                 yield t
 
+    def axis_to_t(self, val, axis=0):
+        """Find curve parameter t for given axis value using adaptive stepping method"""
+        p0, p1, p2, p3 = self._p0[axis], self._p1[axis], self._p2[axis], self._p3[axis]
+
+        # Handle zero-length curve
+        if abs(p3 - p0) < 1e-10:
+            return 0.5
+
+        # Normalize input to [0,1] range
+        x = (val - p0) / (p3 - p0)
+
+        # Fast path for boundary values
+        if x <= 0.0:
+            return 0.0
+        if x >= 1.0:
+            return 1.0
+
+        # Calculate normalized control points
+        x1 = (p1 - p0) / (p3 - p0)
+        x2 = (p2 - p0) / (p3 - p0)
+
+        # Linear check
+        if abs(x1 - x / 3.0) < 1e-6 and abs(x2 - 2.0 * x / 3.0) < 1e-6:
+            return x
+
+        # Adaptive step method
+        t = 0.5
+
+        for i in range(15):
+            s = 1.0 - t
+            # Evaluate bezier: ft = bezier_x(t) - target_x
+            ft = (3 * s * s * t * x1) + (3 * s * t * t * x2) + (t * t * t) - x
+
+            if abs(ft) < 0.0001:
+                break
+
+            # Adaptive step: 1/4, 1/8, 1/16, 1/32, ...
+            step = 1.0 / (4 << i)
+
+            if ft > 0:
+                t -= step
+            else:
+                t += step
+
+        return t
+
+    # def find_critical(self):
+    #     """Find critical points where derivative equals zero using bisection method"""
+    #     p0, p1, p2, p3 = self._p0.y, self._p1.y, self._p2.y, self._p3.y
+    #     p_min, p_max = min(p0, p3), max(p0, p3)
+
+    #     if not (p1 > p_max or p1 < p_min or p2 > p_max or p2 < p_min):
+    #         return
+
+    #     def derivative(t):
+    #         inv_t = 1.0 - t
+    #         return 3 * (inv_t**2 * (p1 - p0) + 2 * inv_t * t * (p2 - p1) + t**2 * (p3 - p2))
+
+    #     found = []
+
+    #     # First check common critical point locations
+    #     for t in [0.25, 0.5, 0.75]:
+    #         if abs(derivative(t)) < 1e-8:
+    #             found.append(t)
+
+    #     # Search in subdivided intervals
+    #     segments = [(0.0001, 0.4999), (0.5001, 0.9999)]
+
+    #     for seg_left, seg_right in segments:
+    #         d_left = derivative(seg_left)
+    #         d_right = derivative(seg_right)
+
+    #         if d_left * d_right >= 0:
+    #             continue
+
+    #         left, right = seg_left, seg_right
+    #         for _ in range(30):
+    #             mid = (left + right) * 0.5
+    #             d_mid = derivative(mid)
+
+    #             if abs(d_mid) < 1e-7:
+    #                 if not any(abs(t - mid) < 1e-6 for t in found):
+    #                     found.append(mid)
+    #                 break
+
+    #             if derivative(left) * d_mid < 0:
+    #                 right = mid
+    #             else:
+    #                 left = mid
+
+    #             if abs(right - left) < 1e-10:
+    #                 final_t = (left + right) * 0.5
+    #                 if not any(abs(t - final_t) < 1e-6 for t in found):
+    #                     found.append(final_t)
+    #                 break
+
+    #     for t in sorted(found):
+    #         yield t
 
 class HasAnimationData:
     animation_data: bpy.types.AnimData
@@ -491,11 +591,49 @@ class VMDImporter:
                 r2.co = (frame, curr_rot[2])
                 r3.co = (frame, curr_rot[-1])
 
+                # === 添加调试输出 - 开始 ===
+                # 检查是否为目标骨骼和帧
+                if name == "両目" and k.frame_number == 3235:
+                    print(f"=== VMD导入调试 - 骨骼: {name}, 帧: {k.frame_number} ===")
+                    print(f"原始VMD旋转数据: {k.rotation}")
+                    print(f"转换后旋转数据: {curr_rot}")
+                    print(f"原始VMD插值数据: {k.interp}")
+                    
+                    # 输出旋转相关的插值数据（从64字节插值数组中提取旋转部分）
+                    # VMD插值数组格式：每个轴有16字节，顺序为X,Y,Z,旋转
+                    rotation_interp = k.interp[48:64]  # 旋转插值数据在48-63字节
+                    print(f"旋转插值原始数据: {rotation_interp}")
+                    
+                    # 解析旋转插值控制点
+                    # 格式：[x1, y1, x2, y2] * 4 (对应4个旋转分量)
+                    for i, axis_name in enumerate(['RX', 'RY', 'RZ', 'RW']):
+                        start_idx = i * 4
+                        ctrl_points = rotation_interp[start_idx:start_idx+4]
+                        print(f"旋转{axis_name}插值控制点: {ctrl_points}")
+                    
+                    print("=" * 50)
+                # === 添加调试输出 - 结束 ===
+
                 curr_kps = (x, y, z, r0, r1, r2, r3)
                 if prev_kps is not None:
                     interp = k.interp
                     for idx, prev_kp, kp in zip(indices, prev_kps, curr_kps):
                         self.__setInterpolation(interp[idx : idx + 16 : 4], prev_kp, kp)
+                        
+                        # === 添加插值设置后的调试输出 - 开始 ===
+                        # 检查旋转插值设置后的状态
+                        if name == "両目" and k.frame_number == 3235:
+                            if idx >= 48:  # 旋转相关的插值
+                                axis_idx = (idx - 48) // 16
+                                axis_names = ['RX', 'RY', 'RZ', 'RW']
+                                if axis_idx < len(axis_names):
+                                    bezier_data = interp[idx : idx + 16 : 4]
+                                    print(f"设置{axis_names[axis_idx]}插值后 - Bezier数据: {bezier_data}")
+                                    print(f"  -> 前一关键帧插值类型: {prev_kp.interpolation}")
+                                    print(f"  -> 前一关键帧右手柄: {prev_kp.handle_right}")
+                                    print(f"  -> 当前关键帧左手柄: {kp.handle_left}")
+                        # === 添加插值设置后的调试输出 - 结束 ===
+                        
                 prev_kps = curr_kps
 
         for c in action.fcurves:
