@@ -79,7 +79,7 @@ class _FCurve:
             x2 = max(0, min(127, int(0.5 + x2 * 127.0 / dx)))
         if abs(dy) < 1e-5:
             # (y1, y2) = (20, 107)
-            (y1, y2) = (x1 if x1 in [20, 40] else 0, x2 if x2 in [87, 107] else 127)
+            (y1, y2) = (x1 if x1 in [20, 40] else 0, x2 if x2 in [87, 107] else 127)  # restore VMD handle positions
         else:
             y1 = max(0, min(127, int(0.5 + y1 * 127.0 / dy)))
             y2 = max(0, min(127, int(0.5 + y2 * 127.0 / dy)))
@@ -299,76 +299,10 @@ class VMDExporter:
                     curr_rot = self.__minRotationDiff(prev_rot, curr_rot)
                 prev_rot = curr_rot
                 key.rotation = curr_rot[1:] + curr_rot[0:1]  # (w, x, y, z) to (x, y, z, w)
-                
-                # === 在导出时添加调试输出 - 开始 ===
-                # 检查是否为目标骨骼和帧
-                if key_name == "右足ＩＫ" and key.frame_number == 327:
-                    print(f"=== VMD导出调试 - 骨骼: {key_name}, 帧: {key.frame_number} ===")
-                    print(f"Blender原始数据:")
-                    print(f"  位置X: {x[0]}, 插值: {x[1]}")
-                    print(f"  位置Y: {y[0]}, 插值: {y[1]}")
-                    print(f"  位置Z: {z[0]}, 插值: {z[1]}")
-                    print(f"  旋转RX: {rx[0]}, 插值: {rx[1]}")
-                    print(f"  旋转RY: {ry[0]}, 插值: {ry[1]}")
-                    print(f"  旋转RZ: {rz[0]}, 插值: {rz[1]}")
-                    print(f"  旋转RW: {rw[0]}, 插值: {rw[1]}")
-                    
-                    print(f"转换前四元数 [x,y,z,w]: {get_xyzw([rx[0], ry[0], rz[0], rw[0]])}")
-                    print(f"转换后四元数: {curr_rot}")
-                    print(f"最终VMD旋转 [x,y,z,w]: {key.rotation}")
-                    
-                    # 显示转换后的插值数据
-                    ir = self.__pickRotationInterpolation([rw[1], rx[1], ry[1], rz[1]])
-                    ix, iy, iz = converter.convert_interpolation([x[1], y[1], z[1]])
-                    print(f"转换后的插值数据:")
-                    print(f"  位置X插值: {ix}")
-                    print(f"  位置Y插值: {iy}")
-                    print(f"  位置Z插值: {iz}")
-                    print(f"  旋转插值: {ir}")
-                    print(f"  选择的旋转插值来源: RW={rw[1]}, RX={rx[1]}, RY={ry[1]}, RZ={rz[1]}")
-                # === 在导出时添加调试输出 - 结束 ===
-                
                 # FIXME we can only choose one interpolation from (rw, rx, ry, rz) for bone's rotation
                 ir = self.__pickRotationInterpolation([rw[1], rx[1], ry[1], rz[1]])
                 ix, iy, iz = converter.convert_interpolation([x[1], y[1], z[1]])
                 key.interp = self.__getVMDBoneInterpolation(ix, iy, iz, ir)
-                
-                # === 在最终插值数据生成后添加调试输出 - 开始 ===
-                if key_name == "右足ＩＫ" and key.frame_number == 327:
-                    print(f"最终VMD插值数组生成:")
-                    print(f"完整VMD插值数组 (64字节): {key.interp}")
-                    
-                    # 根据实际的VMD格式解析插值控制点
-                    interp = key.interp
-                    x_x1, x_y1, x_x2, x_y2 = interp[0], interp[4], interp[8], interp[12]
-                    y_x1, y_y1, y_x2, y_y2 = interp[1], interp[5], interp[9], interp[13]
-                    z_x1, z_y1, z_x2, z_y2 = interp[17], interp[6], interp[10], interp[14]
-                    r_x1, r_y1, r_x2, r_y2 = interp[18], interp[7], interp[11], interp[15]
-                    
-                    print(f"解析出的各轴插值控制点:")
-                    print(f"  X位置: [{x_x1}, {x_y1}, {x_x2}, {x_y2}] (索引: 0, 4, 8, 12)")
-                    print(f"  Y位置: [{y_x1}, {y_y1}, {y_x2}, {y_y2}] (索引: 1, 5, 9, 13)")
-                    print(f"  Z位置: [{z_x1}, {z_y1}, {z_x2}, {z_y2}] (索引: 17, 6, 10, 14)")
-                    print(f"  R轴:   [{r_x1}, {r_y1}, {r_x2}, {r_y2}] (索引: 18, 7, 11, 15)")
-                    
-                    # 显示输入的插值数据以便对比
-                    print(f"输入的插值数据对比:")
-                    print(f"  ix输入: {ix} -> X轴输出: [{x_x1}, {x_y1}, {x_x2}, {x_y2}]")
-                    print(f"  iy输入: {iy} -> Y轴输出: [{y_x1}, {y_y1}, {y_x2}, {y_y2}]")
-                    print(f"  iz输入: {iz} -> Z轴输出: [{z_x1}, {z_y1}, {z_x2}, {z_y2}]")
-                    print(f"  ir输入: {ir} -> R轴输出: [{r_x1}, {r_y1}, {r_x2}, {r_y2}]")
-                    
-                    # 显示64字节数据的4行结构
-                    print(f"VMD插值数组结构 (4行x16字节):")
-                    for i in range(4):
-                        start = i * 16
-                        end = start + 16
-                        row = interp[start:end]
-                        print(f"  行{i+1}: {row}")
-                    
-                    print("=" * 50)
-                # === 在最终插值数据生成后添加调试输出 - 结束 ===
-                
                 frame_keys.append(key)
             logging.info("(bone) frames:%5d  name: %s", len(frame_keys), key_name)
         logging.info("---- bone animations:%5d  source: %s", len(vmd_bone_anim), armObj.name)
@@ -575,7 +509,7 @@ class VMDExporter:
         if args.get("use_pose_mode", False):
             self.__bone_converter_cls = vmd.importer.BoneConverterPoseMode
 
-        self.__preserve_curves = args.get('preserve_curves', False)
+        self.__preserve_curves = args.get("preserve_curves", False)
 
         if armature or mesh:
             vmdFile = vmd.File()

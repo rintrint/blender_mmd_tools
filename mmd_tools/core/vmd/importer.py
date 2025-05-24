@@ -135,13 +135,13 @@ class _FnBezier:
     @classmethod
     def from_fcurve(cls, kp0, kp1):
         p0, p1, p2, p3 = kp0.co, kp0.handle_right, kp1.handle_left, kp1.co
-        # # Clamp for using Cardano's cubic formula
-        # if p1.x > p3.x:
-        #     t = (p3.x - p0.x) / (p1.x - p0.x)
-        #     p1 = (1 - t) * p0 + p1 * t
-        # if p0.x > p2.x:
-        #     t = (p3.x - p0.x) / (p3.x - p2.x)
-        #     p2 = (1 - t) * p3 + p2 * t
+        # Clamp for using Cardano's cubic formula
+        if p1.x > p3.x:
+            t = (p3.x - p0.x) / (p1.x - p0.x)
+            p1 = (1 - t) * p0 + p1 * t
+        if p0.x > p2.x:
+            t = (p3.x - p0.x) / (p3.x - p2.x)
+            p2 = (1 - t) * p3 + p2 * t
         return cls(p0, p1, p2, p3)
 
     def __init__(self, p0, p1, p2, p3):  # assuming VMD's bezier or F-Curve's bezier
@@ -177,14 +177,14 @@ class _FnBezier:
     def evaluate_by_x(self, x):
         return self.evaluate(self.axis_to_t(x))
 
-    # def axis_to_t(self, val, axis=0):
-    #     """Find parameter t using Cardano's cubic formula"""
-    #     p0, p1, p2, p3 = self._p0[axis], self._p1[axis], self._p2[axis], self._p3[axis]
-    #     a = p3 - p0 + 3 * (p1 - p2)
-    #     b = 3 * (p0 - 2 * p1 + p2)
-    #     c = 3 * (p1 - p0)
-    #     d = p0 - val
-    #     return next(self.__find_roots(a, b, c, d))
+    def axis_to_t(self, val, axis=0):
+        """Find parameter t using Cardano's cubic formula"""
+        p0, p1, p2, p3 = self._p0[axis], self._p1[axis], self._p2[axis], self._p3[axis]
+        a = p3 - p0 + 3 * (p1 - p2)
+        b = 3 * (p0 - 2 * p1 + p2)
+        c = 3 * (p1 - p0)
+        d = p0 - val
+        return next(self.__find_roots(a, b, c, d))
 
     def find_critical(self):
         p0, p1, p2, p3 = self._p0.y, self._p1.y, self._p2.y, self._p3.y
@@ -249,104 +249,6 @@ class _FnBezier:
             if 0 <= t <= 1:
                 yield t
 
-    def axis_to_t(self, val, axis=0):
-        """Find curve parameter t for given axis value using adaptive stepping method"""
-        p0, p1, p2, p3 = self._p0[axis], self._p1[axis], self._p2[axis], self._p3[axis]
-
-        # Handle zero-length curve
-        if abs(p3 - p0) < 1e-10:
-            return 0.5
-
-        # Normalize input to [0,1] range
-        x = (val - p0) / (p3 - p0)
-
-        # Fast path for boundary values
-        if x <= 0.0:
-            return 0.0
-        if x >= 1.0:
-            return 1.0
-
-        # Calculate normalized control points
-        x1 = (p1 - p0) / (p3 - p0)
-        x2 = (p2 - p0) / (p3 - p0)
-
-        # Linear check
-        if abs(x1 - x / 3.0) < 1e-6 and abs(x2 - 2.0 * x / 3.0) < 1e-6:
-            return x
-
-        # Adaptive step method
-        t = 0.5
-
-        for i in range(15):
-            s = 1.0 - t
-            # Evaluate bezier: ft = bezier_x(t) - target_x
-            ft = (3 * s * s * t * x1) + (3 * s * t * t * x2) + (t * t * t) - x
-
-            if abs(ft) < 0.0001:
-                break
-
-            # Adaptive step: 1/4, 1/8, 1/16, 1/32, ...
-            step = 1.0 / (4 << i)
-
-            if ft > 0:
-                t -= step
-            else:
-                t += step
-
-        return t
-
-    # def find_critical(self):
-    #     """Find critical points where derivative equals zero using bisection method"""
-    #     p0, p1, p2, p3 = self._p0.y, self._p1.y, self._p2.y, self._p3.y
-    #     p_min, p_max = min(p0, p3), max(p0, p3)
-
-    #     if not (p1 > p_max or p1 < p_min or p2 > p_max or p2 < p_min):
-    #         return
-
-    #     def derivative(t):
-    #         inv_t = 1.0 - t
-    #         return 3 * (inv_t**2 * (p1 - p0) + 2 * inv_t * t * (p2 - p1) + t**2 * (p3 - p2))
-
-    #     found = []
-
-    #     # First check common critical point locations
-    #     for t in [0.25, 0.5, 0.75]:
-    #         if abs(derivative(t)) < 1e-8:
-    #             found.append(t)
-
-    #     # Search in subdivided intervals
-    #     segments = [(0.0001, 0.4999), (0.5001, 0.9999)]
-
-    #     for seg_left, seg_right in segments:
-    #         d_left = derivative(seg_left)
-    #         d_right = derivative(seg_right)
-
-    #         if d_left * d_right >= 0:
-    #             continue
-
-    #         left, right = seg_left, seg_right
-    #         for _ in range(30):
-    #             mid = (left + right) * 0.5
-    #             d_mid = derivative(mid)
-
-    #             if abs(d_mid) < 1e-7:
-    #                 if not any(abs(t - mid) < 1e-6 for t in found):
-    #                     found.append(mid)
-    #                 break
-
-    #             if derivative(left) * d_mid < 0:
-    #                 right = mid
-    #             else:
-    #                 left = mid
-
-    #             if abs(right - left) < 1e-10:
-    #                 final_t = (left + right) * 0.5
-    #                 if not any(abs(t - final_t) < 1e-6 for t in found):
-    #                     found.append(final_t)
-    #                 break
-
-    #     for t in sorted(found):
-    #         yield t
 
 class HasAnimationData:
     animation_data: bpy.types.AnimData
@@ -380,10 +282,14 @@ class VMDImporter:
 
     @staticmethod
     def __setInterpolation(bezier, kp0, kp1):
-        if bezier[0] == bezier[1] and bezier[2] == bezier[3]:
-            kp0.interpolation = "LINEAR"
-        else:
-            kp0.interpolation = "BEZIER"
+        # if bezier[0] == bezier[1] and bezier[2] == bezier[3]:
+        #     kp0.interpolation = "BEZIER"
+        # else:
+        #     kp0.interpolation = "BEZIER"
+
+        # Always use BEZIER to preserve VMD handle positions
+        kp0.interpolation = "BEZIER"
+
         kp0.handle_right_type = "FREE"
         kp1.handle_left_type = "FREE"
         d = (kp1.co - kp0.co) / 127.0
@@ -591,85 +497,11 @@ class VMDImporter:
                 r2.co = (frame, curr_rot[2])
                 r3.co = (frame, curr_rot[-1])
 
-                # === 在导入时添加调试输出 - 开始 ===
-                # 检查是否为目标骨骼和帧
-                if name == "右足ＩＫ" and k.frame_number == 327:
-                    print(f"=== VMD导入调试 - 骨骼: {name}, 帧: {k.frame_number} ===")
-                    print(f"原始VMD旋转数据: {k.rotation}")
-                    print(f"转换后旋转数据: {curr_rot}")
-                    print(f"原始VMD插值数据 (64字节): {k.interp}")
-                    
-                    # 根据VMD格式正确提取各轴插值控制点
-                    # X轴: 索引 0, 4, 8, 12
-                    # Y轴: 索引 1, 5, 9, 13 (x_x1在索引16重复)
-                    # Z轴: 索引 17, 6, 10, 14
-                    # R轴: 索引 18, 7, 11, 15
-                    
-                    interp = k.interp
-                    x_x1, x_y1, x_x2, x_y2 = interp[0], interp[4], interp[8], interp[12]
-                    y_x1, y_y1, y_x2, y_y2 = interp[1], interp[5], interp[9], interp[13]  # y_x1也在interp[16]
-                    z_x1, z_y1, z_x2, z_y2 = interp[17], interp[6], interp[10], interp[14]
-                    r_x1, r_y1, r_x2, r_y2 = interp[18], interp[7], interp[11], interp[15]
-                    
-                    print(f"VMD插值控制点解析:")
-                    print(f"  X轴插值: [{x_x1}, {x_y1}, {x_x2}, {x_y2}] (索引: 0, 4, 8, 12)")
-                    print(f"  Y轴插值: [{y_x1}, {y_y1}, {y_x2}, {y_y2}] (索引: 1, 5, 9, 13)")
-                    print(f"  Z轴插值: [{z_x1}, {z_y1}, {z_x2}, {z_y2}] (索引: 17, 6, 10, 14)")
-                    print(f"  R轴插值: [{r_x1}, {r_y1}, {r_x2}, {r_y2}] (索引: 18, 7, 11, 15)")
-                    
-                    # 验证重复值
-                    print(f"数据验证:")
-                    print(f"  Y轴x1重复检查: interp[1]={interp[1]}, interp[16]={interp[16]} (应该相等)")
-                    
-                    # 显示完整的64字节数据分组（每16字节一行）
-                    print(f"完整64字节插值数据:")
-                    for i in range(4):
-                        start = i * 16
-                        end = start + 16
-                        group = interp[start:end]
-                        print(f"  第{i+1}行 (字节{start:2d}-{end-1:2d}): {group}")
-                    
-                    print("=" * 50)
-                # === 在导入时添加调试输出 - 结束 ===
-
                 curr_kps = (x, y, z, r0, r1, r2, r3)
                 if prev_kps is not None:
                     interp = k.interp
                     for idx, prev_kp, kp in zip(indices, prev_kps, curr_kps):
                         self.__setInterpolation(interp[idx : idx + 16 : 4], prev_kp, kp)
-                        
-                        # === 在插值设置后添加调试输出 - 开始 ===
-                        # 在设置插值的循环中添加
-                        if name == "右足ＩＫ" and k.frame_number == 327:
-                            if prev_kps is not None:
-                                interp = k.interp
-                                print(f"插值设置过程:")
-                                # indices = tuple(converter.convert_interpolation((0, 16, 32))) + (48,) * len(bone_rotation)
-                                # 这里的indices是指向VMD插值数据的起始位置，每次取16字节中的每4个字节
-                                
-                                axis_info = [
-                                    ("X位置", 0),   # 从索引0开始，每4个取一个: 0, 4, 8, 12
-                                    ("Y位置", 16),  # 从索引16开始，每4个取一个: 16, 20, 24, 28 (但实际数据在1,5,9,13)
-                                    ("Z位置", 32),  # 从索引32开始，每4个取一个: 32, 36, 40, 44
-                                    ("RX旋转", 48), # 从索引48开始，每4个取一个: 48, 52, 56, 60
-                                    ("RY旋转", 48), # 旋转都使用同一个插值
-                                    ("RZ旋转", 48),
-                                    ("RW旋转", 48)
-                                ]
-                                
-                                for i, (prev_kp, kp) in enumerate(zip(prev_kps, curr_kps)):
-                                    if i < len(axis_info):
-                                        axis_name, idx = axis_info[i]
-                                        # 提取对应的插值数据 (每4个字节取一个，间隔为4)
-                                        bezier_data = interp[idx : idx + 16 : 4]
-                                        print(f"  {axis_name} - 起始索引{idx}: VMD数据{bezier_data}")
-                                        print(f"    -> 设置后插值类型: {prev_kp.interpolation}")
-                                        if prev_kp.interpolation == "BEZIER":
-                                            print(f"    -> 前帧右手柄: {prev_kp.handle_right}")
-                                            print(f"    -> 当前帧左手柄: {kp.handle_left}")
-                                print("=" * 30)
-                        # === 在插值设置后添加调试输出 - 结束 ===
-                        
                 prev_kps = curr_kps
 
         for c in action.fcurves:
@@ -695,7 +527,7 @@ class VMDImporter:
         if len(propertyAnim) > 0:
             # Collect IK states from the first frame
             first_frame_ik_states = {}
-            first_frame = float('inf')
+            first_frame = float("inf")
             for keyFrame in propertyAnim:
                 frame_num = keyFrame.frame_number
                 if frame_num < first_frame:
