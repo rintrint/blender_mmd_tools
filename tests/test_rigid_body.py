@@ -1070,6 +1070,450 @@ class TestRigidBody(unittest.TestCase):
 
         print("✓ Rigid body error handling test completed")
 
+    def test_physics_assembly_repeated_operations_should_fail(self):
+        """Test repeated physics assembly operations and parameter changes - should FAIL if bug exists"""
+        self._enable_mmd_tools()
+
+        model = self._create_test_model()
+
+        # Create a chain of rigid bodies (like a skirt)
+        rigid_bodies = []
+        for i in range(3):  # Reduced count for more reliable testing
+            rigid_obj = self._create_rigid_body_object(
+                model,
+                location=(i * 1.0, 0, 5),  # Start at height 5 for gravity effect
+                shape="SPHERE",
+            )
+            # Set initial parameters
+            rigid_obj.rigid_body.mass = 1.0
+            rigid_obj.rigid_body.friction = 0.5
+            rigid_obj.rigid_body.linear_damping = 0.0  # No damping for clear movement
+            rigid_obj.mmd_rigid.type = "1"  # Dynamic
+            rigid_bodies.append(rigid_obj)
+
+        # Ensure physics world is properly set up
+        if not bpy.context.scene.rigidbody_world:
+            bpy.ops.rigidbody.world_add()
+
+        rbw = bpy.context.scene.rigidbody_world
+        for rb in rigid_bodies:
+            if rb not in rbw.collection.objects.values():
+                rbw.collection.objects.link(rb)
+
+        # Store initial positions
+        initial_positions = [rb.location.copy() for rb in rigid_bodies]
+
+        # First physics simulation
+        original_frame = bpy.context.scene.frame_current
+        bpy.context.scene.frame_set(1)
+
+        # Run simulation for enough frames to see gravity effect
+        for frame in range(1, 30):
+            bpy.context.scene.frame_set(frame)
+
+        first_simulation_positions = [rb.location.copy() for rb in rigid_bodies]
+
+        # Reset to frame 1 and positions
+        bpy.context.scene.frame_set(1)
+        for i, rb in enumerate(rigid_bodies):
+            rb.location = initial_positions[i]
+
+        # CRITICAL: Modify parameters significantly
+        for rb in rigid_bodies:
+            rb.rigid_body.mass = 10.0  # 10x heavier - should fall much faster
+            rb.rigid_body.friction = 0.0  # No friction
+
+        # Force world update
+        bpy.ops.mmd_tools.rigid_body_world_update()
+
+        # Second physics simulation with same frame count
+        bpy.context.scene.frame_set(1)
+        for frame in range(1, 30):
+            bpy.context.scene.frame_set(frame)
+
+        second_simulation_positions = [rb.location.copy() for rb in rigid_bodies]
+
+        # Reset frame
+        bpy.context.scene.frame_set(original_frame)
+
+        # Check if simulation results are meaningfully different
+        # With 10x mass, objects should fall much faster and reach different positions
+        max_position_difference = 0.0
+        for i in range(len(first_simulation_positions)):
+            diff = (first_simulation_positions[i] - second_simulation_positions[i]).length
+            max_position_difference = max(max_position_difference, diff)
+
+        print(f"   - Max position difference between simulations: {max_position_difference}")
+        print(f"   - First simulation final Z: {[pos.z for pos in first_simulation_positions]}")
+        print(f"   - Second simulation final Z: {[pos.z for pos in second_simulation_positions]}")
+
+        # The test FAILS if the bug exists (positions are too similar despite parameter changes)
+        self.assertGreater(max_position_difference, 0.5, "Physics simulation results should be significantly different when mass changes from 1.0 to 10.0. If this fails, it indicates the bug where parameter changes don't affect physics simulation.")
+
+    def test_mass_change_physics_effect_should_fail(self):
+        """Test if mass changes actually affect physics simulation - should FAIL if bug exists"""
+        self._enable_mmd_tools()
+
+        model = self._create_test_model()
+
+        # Create two identical rigid bodies
+        rigid_light = self._create_rigid_body_object(model, location=(0, 0, 10))
+        rigid_heavy = self._create_rigid_body_object(model, location=(2, 0, 10))
+
+        # Set very different masses
+        rigid_light.rigid_body.mass = 0.1  # Very light
+        rigid_heavy.rigid_body.mass = 100.0  # Very heavy
+
+        # Both should have no air resistance
+        rigid_light.rigid_body.linear_damping = 0.0
+        rigid_heavy.rigid_body.linear_damping = 0.0
+
+        # Ensure they're in physics world
+        rbw = bpy.context.scene.rigidbody_world
+        if not rbw:
+            bpy.ops.rigidbody.world_add()
+            rbw = bpy.context.scene.rigidbody_world
+
+        if rigid_light not in rbw.collection.objects.values():
+            rbw.collection.objects.link(rigid_light)
+        if rigid_heavy not in rbw.collection.objects.values():
+            rbw.collection.objects.link(rigid_heavy)
+
+        # Run physics simulation
+        original_frame = bpy.context.scene.frame_current
+        bpy.context.scene.frame_set(1)
+
+        initial_light_z = rigid_light.location.z
+        initial_heavy_z = rigid_heavy.location.z
+
+        # Simulate physics
+        for frame in range(1, 50):
+            bpy.context.scene.frame_set(frame)
+
+        final_light_z = rigid_light.location.z
+        final_heavy_z = rigid_heavy.location.z
+
+        bpy.context.scene.frame_set(original_frame)
+
+        light_fall_distance = initial_light_z - final_light_z
+        heavy_fall_distance = initial_heavy_z - final_heavy_z
+
+        print(f"   - Light object (mass 0.1) fell: {light_fall_distance}")
+        print(f"   - Heavy object (mass 100.0) fell: {heavy_fall_distance}")
+        print(f"   - Fall distance difference: {abs(light_fall_distance - heavy_fall_distance)}")
+
+        # In a vacuum, both should fall the same distance (physics is correct)
+        # But if there's any air resistance or other factors, heavy should fall slightly more
+        # The key test: they should BOTH fall significantly (> 1 unit)
+        self.assertGreater(light_fall_distance, 1.0, "Light object should fall significantly due to gravity")
+        self.assertGreater(heavy_fall_distance, 1.0, "Heavy object should fall significantly due to gravity")
+
+        # More importantly: verify that mass values are actually what we set
+        self.assertAlmostEqual(rigid_light.rigid_body.mass, 0.1, places=2, msg="Light object mass should be 0.1")
+        self.assertAlmostEqual(rigid_heavy.rigid_body.mass, 100.0, places=1, msg="Heavy object mass should be 100.0")
+
+    def test_parameter_modification_after_bake_should_fail(self):
+        """Test parameter changes after physics bake - should FAIL if parameters don't take effect"""
+        self._enable_mmd_tools()
+
+        model = self._create_test_model()
+        rigid_obj = self._create_rigid_body_object(model, location=(0, 0, 8))
+
+        # Set initial parameters
+        rigid_obj.rigid_body.mass = 1.0
+        rigid_obj.rigid_body.friction = 0.5
+        rigid_obj.rigid_body.linear_damping = 0.0
+
+        # Ensure physics world
+        if not bpy.context.scene.rigidbody_world:
+            bpy.ops.rigidbody.world_add()
+
+        rbw = bpy.context.scene.rigidbody_world
+        if rigid_obj not in rbw.collection.objects.values():
+            rbw.collection.objects.link(rigid_obj)
+
+        # First: Bake physics with initial parameters and simulate
+        original_frame = bpy.context.scene.frame_current
+        bpy.context.scene.frame_set(1)
+
+        try:
+            bpy.ops.mmd_tools.ptcache_rigid_body_bake()
+        except Exception:
+            pass  # Bake might fail, that's ok for this test
+
+        # Run first simulation
+        for frame in range(1, 30):
+            bpy.context.scene.frame_set(frame)
+
+        first_final_position = rigid_obj.location.copy()
+
+        # Reset position and change parameters significantly
+        bpy.context.scene.frame_set(1)
+        rigid_obj.location.z = 8  # Reset height
+        rigid_obj.rigid_body.mass = 50.0  # Much heavier
+
+        # Delete old bake to force recalculation
+        try:
+            bpy.ops.mmd_tools.ptcache_rigid_body_delete_bake()
+        except Exception:
+            pass
+
+        # Force world update
+        bpy.ops.mmd_tools.rigid_body_world_update()
+
+        # Test that new parameters are actually applied
+        current_mass = rigid_obj.rigid_body.mass
+        print(f"   - Set mass to 50.0, current mass is: {current_mass}")
+
+        # This should pass if physics system correctly updates parameters
+        self.assertAlmostEqual(current_mass, 50.0, places=1, msg="Mass should be updated to 50.0 after parameter change and world update")
+
+        # NEW: Test actual physics simulation with new parameters
+        try:
+            bpy.ops.mmd_tools.ptcache_rigid_body_bake()
+        except Exception:
+            pass
+
+        # Run second simulation with new mass
+        bpy.context.scene.frame_set(1)
+        for frame in range(1, 30):
+            bpy.context.scene.frame_set(frame)
+
+        second_final_position = rigid_obj.location.copy()
+
+        bpy.context.scene.frame_set(original_frame)
+
+        # Calculate position difference
+        position_difference = (first_final_position - second_final_position).length
+
+        print(f"   - First simulation (mass 1.0) final position: {first_final_position}")
+        print(f"   - Second simulation (mass 50.0) final position: {second_final_position}")
+        print(f"   - Position difference: {position_difference}")
+
+        # The critical test: physics simulation should reflect the parameter change
+        self.assertGreater(position_difference, 0.1, f"Position difference ({position_difference}) should be > 0.1 when mass changes from 1.0 to 50.0. If this fails, it indicates physics parameters are not properly applied after bake operations.")
+
+    def test_skirt_physics_deterministic_should_fail(self):
+        """Test skirt physics with deterministic setup - should FAIL if bug exists"""
+        self._enable_mmd_tools()
+
+        model = self._create_test_model()
+
+        # Create a simple 3-segment chain
+        segments = []
+        for i in range(3):
+            segment = self._create_rigid_body_object(
+                model,
+                location=(i * 0.5, 0, 5),  # Linear arrangement, start at height
+                shape="BOX",
+            )
+            # Set identical initial parameters
+            segment.rigid_body.mass = 1.0
+            segment.rigid_body.friction = 0.5
+            segment.rigid_body.linear_damping = 0.1
+            segment.rigid_body.angular_damping = 0.1
+            segment.mmd_rigid.type = "1"  # Dynamic
+            segments.append(segment)
+
+        # Create joints between segments
+        joints = []
+        for i in range(len(segments) - 1):
+            joint = self._create_joint_object(model, segments[i], segments[i + 1], location=((i + 0.5) * 0.5, 0, 5))
+            # Set joint limits
+            rbc = joint.rigid_body_constraint
+            rbc.limit_lin_x_upper = 0.2
+            rbc.limit_lin_x_lower = -0.2
+            rbc.limit_lin_y_upper = 0.2
+            rbc.limit_lin_y_lower = -0.2
+            rbc.limit_lin_z_upper = 0.2
+            rbc.limit_lin_z_lower = -0.2
+            joints.append(joint)
+
+        # Ensure physics world setup
+        rbw = bpy.context.scene.rigidbody_world
+        if not rbw:
+            bpy.ops.rigidbody.world_add()
+            rbw = bpy.context.scene.rigidbody_world
+
+        for segment in segments:
+            if segment not in rbw.collection.objects.values():
+                rbw.collection.objects.link(segment)
+
+        for joint in joints:
+            if joint not in rbw.constraints.objects.values():
+                rbw.constraints.objects.link(joint)
+
+        # Record initial setup
+        initial_positions = [seg.location.copy() for seg in segments]
+        initial_masses = [seg.rigid_body.mass for seg in segments]
+
+        # First simulation
+        original_frame = bpy.context.scene.frame_current
+        bpy.context.scene.frame_set(1)
+        for frame in range(1, 40):
+            bpy.context.scene.frame_set(frame)
+
+        first_final_positions = [seg.location.copy() for seg in segments]
+
+        # Reset everything
+        bpy.context.scene.frame_set(1)
+        for i, segment in enumerate(segments):
+            segment.location = initial_positions[i]
+
+        # Change parameters dramatically
+        for segment in segments:
+            segment.rigid_body.mass = 5.0  # 5x heavier
+            segment.rigid_body.linear_damping = 0.5  # Much more damping
+
+        # Force world update
+        bpy.ops.mmd_tools.rigid_body_world_update()
+
+        # Verify parameters were actually changed
+        for i, segment in enumerate(segments):
+            actual_mass = segment.rigid_body.mass
+            actual_damping = segment.rigid_body.linear_damping
+            print(f"   - Segment {i}: mass changed from {initial_masses[i]} to {actual_mass}, damping: {actual_damping}")
+
+            # Assert that mass actually changed
+            self.assertNotAlmostEqual(actual_mass, initial_masses[i], places=2, msg=f"Segment {i} mass should have changed from {initial_masses[i]} to 5.0")
+            self.assertAlmostEqual(actual_mass, 5.0, places=2, msg=f"Segment {i} mass should be 5.0 after parameter change")
+
+        # Second simulation with same duration
+        bpy.context.scene.frame_set(1)
+        for frame in range(1, 40):
+            bpy.context.scene.frame_set(frame)
+
+        second_final_positions = [seg.location.copy() for seg in segments]
+
+        bpy.context.scene.frame_set(original_frame)
+
+        # Calculate differences
+        position_differences = []
+        for i in range(len(first_final_positions)):
+            diff = (first_final_positions[i] - second_final_positions[i]).length
+            position_differences.append(diff)
+
+        max_diff = max(position_differences)
+        avg_diff = sum(position_differences) / len(position_differences)
+
+        print(f"   - Position differences: {position_differences}")
+        print(f"   - Max difference: {max_diff}, Average difference: {avg_diff}")
+        print(f"   - First simulation final positions: {[tuple(pos) for pos in first_final_positions]}")
+        print(f"   - Second simulation final positions: {[tuple(pos) for pos in second_final_positions]}")
+
+        # The test fails if positions are too similar despite significant parameter changes
+        self.assertGreater(max_diff, 0.3, f"Maximum position difference ({max_diff}) should be > 0.3 when mass changes from 1.0 to 5.0 and damping changes from 0.1 to 0.5. If this fails, it indicates the physics parameter change bug described in GitHub issue #232.")
+
+    def test_physics_world_parameter_sync_should_fail(self):
+        """Test if physics world properly syncs parameter changes - should FAIL if sync broken"""
+        self._enable_mmd_tools()
+
+        model = self._create_test_model()
+        rigid_obj = self._create_rigid_body_object(model, location=(0, 0, 0))
+
+        # Set specific parameters
+        test_mass = 7.77
+        test_friction = 0.33
+        test_restitution = 0.66
+
+        rigid_obj.rigid_body.mass = test_mass
+        rigid_obj.rigid_body.friction = test_friction
+        rigid_obj.rigid_body.restitution = test_restitution
+
+        # Multiple world update operations (simulating user workflow)
+        for i in range(3):
+            bpy.ops.mmd_tools.rigid_body_world_update()
+
+            # Check if parameters are preserved after each update
+            current_mass = rigid_obj.rigid_body.mass
+            current_friction = rigid_obj.rigid_body.friction
+            current_restitution = rigid_obj.rigid_body.restitution
+
+            print(f"   - After update {i}: mass={current_mass}, friction={current_friction}, restitution={current_restitution}")
+
+            # Parameters should remain exactly as set
+            self.assertAlmostEqual(current_mass, test_mass, places=3, msg=f"Mass should remain {test_mass} after world update {i}")
+            self.assertAlmostEqual(current_friction, test_friction, places=3, msg=f"Friction should remain {test_friction} after world update {i}")
+            self.assertAlmostEqual(current_restitution, test_restitution, places=3, msg=f"Restitution should remain {test_restitution} after world update {i}")
+
+    def test_cached_physics_state_invalidation_should_fail(self):
+        """Test if cached physics state is properly invalidated - should FAIL if cache not cleared"""
+        self._enable_mmd_tools()
+
+        model = self._create_test_model()
+        rigid_obj = self._create_rigid_body_object(model, location=(0, 0, 10))
+
+        # Set initial parameters for first bake
+        rigid_obj.rigid_body.mass = 1.0
+        rigid_obj.rigid_body.linear_damping = 0.0
+
+        # Ensure in physics world
+        rbw = bpy.context.scene.rigidbody_world
+        if not rbw:
+            bpy.ops.rigidbody.world_add()
+            rbw = bpy.context.scene.rigidbody_world
+
+        if rigid_obj not in rbw.collection.objects.values():
+            rbw.collection.objects.link(rigid_obj)
+
+        # First bake and simulation
+        original_frame = bpy.context.scene.frame_current
+        bpy.context.scene.frame_set(1)
+
+        try:
+            bpy.ops.mmd_tools.ptcache_rigid_body_bake()
+            print("   - First bake completed")
+        except Exception as e:
+            print(f"   - First bake failed: {e}")
+
+        # Simulate to get position
+        for frame in range(1, 30):
+            bpy.context.scene.frame_set(frame)
+
+        first_final_position = rigid_obj.location.copy()
+
+        # Reset and change parameters significantly
+        bpy.context.scene.frame_set(1)
+        rigid_obj.location.z = 10  # Reset height
+        rigid_obj.rigid_body.mass = 20.0  # Much heavier
+
+        # Delete bake and rebake with new parameters
+        try:
+            bpy.ops.mmd_tools.ptcache_rigid_body_delete_bake()
+            print("   - Deleted previous bake")
+        except Exception as e:
+            print(f"   - Delete bake failed: {e}")
+
+        try:
+            bpy.ops.mmd_tools.ptcache_rigid_body_bake()
+            print("   - Second bake completed")
+        except Exception as e:
+            print(f"   - Second bake failed: {e}")
+
+        # Simulate same duration with new parameters
+        bpy.context.scene.frame_set(1)
+        for frame in range(1, 30):
+            bpy.context.scene.frame_set(frame)
+
+        second_final_position = rigid_obj.location.copy()
+
+        bpy.context.scene.frame_set(original_frame)
+
+        # Check if mass parameter actually changed
+        current_mass = rigid_obj.rigid_body.mass
+        self.assertAlmostEqual(current_mass, 20.0, places=1, msg="Mass should be 20.0 after parameter change")
+
+        # Check if simulation results reflect the parameter change
+        position_difference = (first_final_position - second_final_position).length
+
+        print(f"   - First simulation (mass 1.0) final position: {first_final_position}")
+        print(f"   - Second simulation (mass 20.0) final position: {second_final_position}")
+        print(f"   - Position difference: {position_difference}")
+
+        # Results should be different enough to indicate parameter change took effect
+        # If physics cache isn't properly invalidated, positions will be identical
+        self.assertGreater(position_difference, 0.1, f"Position difference ({position_difference}) should be > 0.1 when mass changes from 1.0 to 20.0. If this fails, it indicates physics cache is not properly invalidated after parameter changes.")
+
 
 if __name__ == "__main__":
     import sys
