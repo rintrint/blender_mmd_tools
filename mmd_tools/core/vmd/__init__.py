@@ -5,6 +5,8 @@ import collections
 import logging
 import struct
 
+import numpy as np
+
 
 class InvalidFileError(Exception):
     pass
@@ -237,21 +239,139 @@ class _AnimationBase(collections.defaultdict):
     def load(self, fin):
         (count,) = struct.unpack("<L", fin.read(4))
         logging.info("loading %s... %d", self.__class__.__name__, count)
-        for i in range(count):
-            name = _decodeCp932String(struct.unpack("<15s", fin.read(15))[0])
-            cls = self.frameClass()
-            frameKey = cls()
-            frameKey.load(fin)
-            self[name].append(frameKey)
+        if count == 0:
+            return
+
+        # Load data directly as numpy arrays without creating Python objects
+        optimized_dict = self._load_optimized_numpy(fin, count)
+
+        # Use optimized numpy data
+        for name, numpy_data in optimized_dict.items():
+            self[name] = numpy_data
+
+    def _load_optimized_numpy(self, fin, count):
+        """Optimized loading: store numpy arrays directly without creating Python objects"""
+        optimized_dict = {}
+
+        # Determine data structure based on frame class
+        frame_class = self.frameClass()
+
+        if frame_class.__name__ == "BoneFrameKey":
+            # VMD bone frame structure: name(15) + frame(4) + location(12) + rotation(16) + interp(64) = 111 bytes
+            record_size = 111
+            dtype = np.dtype(
+                [
+                    ("name", "S15"),  # 15 bytes: bone name
+                    ("frame", "<u4"),  # 4 bytes: frame number
+                    ("location", "<f4", (3,)),  # 12 bytes: x,y,z location
+                    ("rotation", "<f4", (4,)),  # 16 bytes: x,y,z,w quaternion
+                    ("interp", "u1", (64,)),  # 64 bytes: interpolation data
+                ]
+            )
+        elif frame_class.__name__ == "ShapeKeyFrameKey":
+            # VMD shape key frame structure: name(15) + frame(4) + weight(4) = 23 bytes
+            record_size = 23
+            dtype = np.dtype(
+                [
+                    ("name", "S15"),  # 15 bytes: shape key name
+                    ("frame", "<u4"),  # 4 bytes: frame number
+                    ("weight", "<f4"),  # 4 bytes: weight value
+                ]
+            )
+        else:
+            # Fallback for unknown frame types
+            raise NotImplementedError(f"Unknown frame class: {frame_class.__name__}")
+
+        # Calculate total bytes needed
+        total_bytes = count * record_size
+
+        # Read all raw data at once
+        raw_bytes = fin.read(total_bytes)
+
+        # Verify we read the expected amount of data
+        if len(raw_bytes) != total_bytes:
+            raise ValueError(f"Expected to read {total_bytes} bytes, but only got {len(raw_bytes)} bytes")
+
+        # Convert raw bytes to structured numpy array
+        structured_data = np.frombuffer(raw_bytes, dtype=dtype)
+
+        # Verify the array has the expected number of records
+        if len(structured_data) != count:
+            raise ValueError(f"Expected {count} records, but got {len(structured_data)} records")
+
+        # Extract names for grouping
+        names_view = structured_data["name"]
+
+        # Sort by name for efficient grouping
+        sort_indices = np.lexsort((names_view,))
+        sorted_names = names_view[sort_indices]
+
+        # Find group boundaries efficiently
+        name_changes = np.concatenate(([True], sorted_names[1:] != sorted_names[:-1]))
+        boundaries = np.where(name_changes)[0]
+        boundaries = np.append(boundaries, len(sorted_names))
+
+        # Build name decoding cache to avoid repeated decoding
+        unique_name_indices = boundaries[:-1]
+        name_decode_cache = {}
+        for boundary_idx in unique_name_indices:
+            name_bytes = sorted_names[boundary_idx]
+            if name_bytes not in name_decode_cache:
+                decoded_name = _decodeCp932String(name_bytes)
+                name_decode_cache[name_bytes] = decoded_name
+
+        # Process each group and store numpy arrays directly
+        for i in range(len(boundaries) - 1):
+            start_idx = boundaries[i]
+            end_idx = boundaries[i + 1]
+
+            # Get all original indices for this bone/shape key
+            group_indices = sort_indices[start_idx:end_idx]
+            name_bytes = sorted_names[start_idx]
+            decoded_name = name_decode_cache[name_bytes]
+
+            # Store numpy array directly without creating Python objects
+            group_numpy_data = structured_data[group_indices]
+            optimized_dict[decoded_name] = group_numpy_data
+
+        return optimized_dict
 
     def save(self, fin):
-        count = sum(len(i) for i in self.values())
+        """Save animation data, handling both numpy and traditional formats"""
+        # Calculate total count
+        count = 0
+        for name, data in self.items():
+            count += len(data)
+
+        # Write count
         fin.write(struct.pack("<L", count))
+
+        # Write data
         for name, frameKeys in self.items():
             name_data = struct.pack("<15s", _encodeCp932String(name))
-            for frameKey in frameKeys:
-                fin.write(name_data)
-                frameKey.save(fin)
+
+            if isinstance(frameKeys, np.ndarray):
+                # Handle numpy array format
+                for i in range(len(frameKeys)):
+                    fin.write(name_data)
+                    frame_data = frameKeys[i]
+
+                    # Write frame data based on type
+                    if self.frameClass().__name__ == "BoneFrameKey":
+                        # Write bone frame data
+                        fin.write(struct.pack("<L", int(frame_data["frame"])))
+                        fin.write(struct.pack("<fff", *frame_data["location"]))
+                        fin.write(struct.pack("<ffff", *frame_data["rotation"]))
+                        fin.write(struct.pack("<64b", *frame_data["interp"]))
+                    elif self.frameClass().__name__ == "ShapeKeyFrameKey":
+                        # Write shape key frame data
+                        fin.write(struct.pack("<L", int(frame_data["frame"])))
+                        fin.write(struct.pack("<f", float(frame_data["weight"])))
+            else:
+                # Handle traditional format
+                for frameKey in frameKeys:
+                    fin.write(name_data)
+                    frameKey.save(fin)
 
 
 class _AnimationListBase(list):

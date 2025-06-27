@@ -9,6 +9,7 @@ import traceback
 import unittest
 
 import bpy
+import numpy as np
 from bl_ext.user_default.mmd_tools.core import vmd
 from bl_ext.user_default.mmd_tools.core.model import Model
 from mathutils import Quaternion, Vector
@@ -282,36 +283,63 @@ class TestVmdExporter(unittest.TestCase):
         source_bone_anim = source_vmd.boneAnimation
         result_bone_anim = result_vmd.boneAnimation
 
+        def get_frames_data(bone_data):
+            """
+            Unified handler for both numpy arrays and traditional object lists
+            Converts numpy structured arrays to frame objects for consistent processing
+            """
+            if isinstance(bone_data, np.ndarray):
+                # Numpy format: convert to comparable format
+                frames = []
+                for i in range(len(bone_data)):
+                    frame_data = bone_data[i]
+
+                    # Create a simple object to mimic BoneFrameKey structure
+                    class FrameData:
+                        def __init__(self, numpy_data):
+                            self.frame_number = int(numpy_data["frame"])
+                            self.location = list(numpy_data["location"])
+                            self.rotation = list(numpy_data["rotation"])
+                            # Check if interpolation data exists in the numpy array
+                            self.interp = list(numpy_data["interp"]) if "interp" in numpy_data.dtype.names else None
+
+                    frames.append(FrameData(frame_data))
+                return frames
+            # Traditional format: return as-is (list of BoneFrameKey objects)
+            return bone_data
+
         # We allow some bones to be filtered out during export
-        # So we only check bones that exist in both
+        # So we only check bones that exist in both source and result
         common_bones = set(source_bone_anim.keys()) & set(result_bone_anim.keys())
 
         print(f"    Checking {len(common_bones)} common bones out of {len(source_bone_anim)} source bones")
 
-        # Used to record the maximum interpolation error for each bone
+        # Dictionary to record the maximum interpolation error for each bone
         bone_interpolation_errors = {}
 
-        # Flag to track if we've already printed detailed interpolation differences
-
+        # Global counter for all interpolation errors across all bones
         interp_error_count = 0
         for bone_name in common_bones:
-            source_frames = source_bone_anim[bone_name]
-            result_frames = result_bone_anim[bone_name]
+            # Convert both source and result data to unified format
+            source_frames = get_frames_data(source_bone_anim[bone_name])
+            result_frames = get_frames_data(result_bone_anim[bone_name])
 
             # Sort frames by frame number for consistent comparison
+            # This ensures we compare corresponding frames even if they're out of order
             source_frames.sort(key=lambda x: x.frame_number)
             result_frames.sort(key=lambda x: x.frame_number)
 
             # Strictly require frame count to be identical
+            # Any discrepancy indicates data loss or corruption during export/import
             self.assertEqual(len(source_frames), len(result_frames), f"Bone {bone_name}: Frame count mismatch - source has {len(source_frames)} frames, exported has {len(result_frames)} frames")
 
-            # Record the maximum interpolation error for this bone
+            # Track the maximum interpolation error for this specific bone
             max_interpolation_error = 0
 
-            # Track previous frame for dy calculation
+            # Track previous frame for calculating dy (delta-y) values for interpolation validation
             prev_src_frame = None
 
-            # Compare all frames
+            # Compare all frames for this bone
             for i in range(len(source_frames)):
                 src_frame = source_frames[i]
                 res_frame = result_frames[i]
@@ -319,49 +347,58 @@ class TestVmdExporter(unittest.TestCase):
                 msg = f"Bone {bone_name}, frame {src_frame.frame_number}"
 
                 # Check frame number consistency
+                # Both source and result should have identical frame numbers after sorting
                 self.assertEqual(src_frame.frame_number, res_frame.frame_number, f"{msg} - frame number mismatch")
 
-                # Check location (allow tolerance due to scale conversion)
+                # Check location (allow small tolerance due to floating-point precision and scale conversion)
+                # Location errors can occur due to coordinate system transformations
                 self.assertLess(self.__vector_error(src_frame.location, res_frame.location), 1e-5, f"{msg} - location error")
 
-                # Check rotation (currently allow large tolerance, may refine later)
+                # Check rotation (allow larger tolerance for quaternion comparisons)
+                # Quaternion rotations can have multiple representations for the same rotation
                 self.assertLess(self.__quaternion_error(src_frame.rotation, res_frame.rotation), 1e-2, f"{msg} - rotation error")
 
                 # Check interpolation - skip first keyframe
                 # Blender uses right handle of previous keyframe and left handle of current keyframe
                 # to calculate interpolation curve, so VMD first frame interpolation cannot be preserved
                 if i > 0:  # Skip first keyframe (index 0)
+                    # Only check interpolation if both frames have interpolation data
                     if hasattr(src_frame, "interp") and hasattr(res_frame, "interp"):
                         if src_frame.interp and res_frame.interp:
-                            # Get dy values for each axis from VMD data
+                            # Calculate dy values for each axis from VMD data
+                            # This helps determine if interpolation differences are acceptable
                             dy_values = self.__get_vmd_keyframe_dy_by_axis(src_frame, prev_src_frame)
 
-                            # Check interpolation with dy information
+                            # Check interpolation with dy information for context-aware validation
                             interp_error, frame_error_count = self.__check_interpolation_with_dy_info(src_frame.interp, res_frame.interp, dy_values, msg)
 
+                            # Accumulate error counts
                             interp_error_count += frame_error_count
                             max_interpolation_error = max(max_interpolation_error, interp_error)
                         else:
-                            # Report if no interpolation data available
+                            # Report if no interpolation data available for debugging
                             has_src_interp = hasattr(src_frame, "interp") and bool(src_frame.interp)
                             has_res_interp = hasattr(res_frame, "interp") and bool(res_frame.interp)
                             print(f"    No interpolation check for {msg} (src_has_interp: {has_src_interp}, res_has_interp: {has_res_interp})")
                     else:
                         print(f"    Skipping interpolation check for first frame: {msg} (VMD first frame interpolation not preserved in Blender)")
 
-                # Update previous frame for next iteration
+                # Update previous frame reference for next iteration's dy calculation
                 prev_src_frame = src_frame
 
-            # Record the maximum interpolation error for this bone
+            # Record the maximum interpolation error for this bone if any errors occurred
             if max_interpolation_error > 0:
                 bone_interpolation_errors[bone_name] = max_interpolation_error
 
+        # Report interpolation error summary
         if bone_interpolation_errors:
             print(f"        Total {interp_error_count} errors")
             print("\n    === Bone Interpolation Error Ranking ===")
-            # Sort by error size
+
+            # Sort bones by error magnitude (highest first) for better debugging
             sorted_errors = sorted(bone_interpolation_errors.items(), key=lambda x: x[1], reverse=True)
 
+            # Display top bones with interpolation errors
             for rank, (bone_name, error) in enumerate(sorted_errors, 1):
                 print(f"    {rank:2d}. {bone_name}: Maximum interpolation error = {error:.2f}")
 
@@ -375,22 +412,50 @@ class TestVmdExporter(unittest.TestCase):
         source_shape_anim = source_vmd.shapeKeyAnimation
         result_shape_anim = result_vmd.shapeKeyAnimation
 
+        def get_shape_frames_data(shape_data):
+            """
+            Unified handler for both numpy arrays and traditional object lists
+            Converts numpy structured arrays to frame objects for consistent processing
+            """
+            if isinstance(shape_data, np.ndarray):
+                # Numpy format: convert to comparable format
+                frames = []
+                for i in range(len(shape_data)):
+                    frame_data = shape_data[i]
+
+                    # Create a simple object to mimic ShapeKeyFrameKey structure
+                    class ShapeFrameData:
+                        def __init__(self, numpy_data):
+                            self.frame_number = int(numpy_data["frame"])
+                            self.weight = float(numpy_data["weight"])
+
+                    frames.append(ShapeFrameData(frame_data))
+                return frames
+            # Traditional format: return as-is (list of ShapeKeyFrameKey objects)
+            return shape_data
+
+        # Find common shape keys that exist in both source and result
+        # Some shape keys might be filtered out during export if they're not available in the model
         common_shapes = set(source_shape_anim.keys()) & set(result_shape_anim.keys())
         print(f"    Checking {len(common_shapes)} common shape keys out of {len(source_shape_anim)} source shapes")
 
+        # Process each common shape key
         for shape_name in common_shapes:
-            source_frames = source_shape_anim[shape_name]
-            result_frames = result_shape_anim[shape_name]
+            # Convert both source and result data to unified format
+            source_frames = get_shape_frames_data(source_shape_anim[shape_name])
+            result_frames = get_shape_frames_data(result_shape_anim[shape_name])
 
             # Sort frames by frame number for consistent comparison
+            # This ensures we compare corresponding frames even if they're stored out of order
             source_frames.sort(key=lambda x: x.frame_number)
             result_frames.sort(key=lambda x: x.frame_number)
 
             # Strictly require frame count to be identical
+            # Any mismatch indicates data loss or corruption during the export/import process
             self.assertEqual(len(source_frames), len(result_frames), f"Shape key {shape_name}: Frame count mismatch - source has {len(source_frames)} frames, exported has {len(result_frames)} frames")
 
-            # Compare all frames (not just first one)
-            for i in range(len(source_frames)):  # Now safe to use len(source_frames)
+            # Compare all frames for this shape key (not just the first one)
+            for i in range(len(source_frames)):
                 src_frame = source_frames[i]
                 res_frame = result_frames[i]
                 msg = f"Shape key {shape_name}, frame {src_frame.frame_number}"
@@ -398,7 +463,7 @@ class TestVmdExporter(unittest.TestCase):
                 # Check frame number consistency
                 self.assertEqual(src_frame.frame_number, res_frame.frame_number, f"{msg} - frame number mismatch")
 
-                # Check weight value
+                # Check weight value with reasonable precision
                 self.assertAlmostEqual(src_frame.weight, res_frame.weight, places=3, msg=f"{msg} - weight error")
 
     # ********************************************

@@ -7,6 +7,7 @@ import os
 from typing import Union
 
 import bpy
+import numpy as np
 from mathutils import Quaternion, Vector
 
 from ... import utils
@@ -329,27 +330,6 @@ class VMDImporter:
         return -curr_q if t2 < t1 else curr_q
 
     @staticmethod
-    def __setInterpolation(bezier, kp0, kp1):
-        # Always use BEZIER to match Blender's default behavior
-        kp0.interpolation = "BEZIER"
-        kp0.handle_right_type = "FREE"
-        kp1.handle_left_type = "FREE"
-
-        d = (kp1.co - kp0.co)
-        dy = d.y
-
-        # Reset handles if the value doesn't change much (dy is small enough) or the bezier is linear
-        # When dy is small enough, the curve is meaningless and will lose data during import; there's no difference in resetting it
-        # When the bezier is linear, the resulting curve is equivalent to the original
-        if abs(dy) < 1e-4 or (bezier[0] == bezier[1] and bezier[2] == bezier[3]):
-            bezier = [20, 20, 107, 107]
-
-        # Always multiply before dividing to reduce precision errors
-        d = (kp1.co - kp0.co)
-        kp0.handle_right = kp0.co + Vector((d.x * bezier[0] / 127.0, d.y * bezier[1] / 127.0))
-        kp1.handle_left = kp0.co + Vector((d.x * bezier[2] / 127.0, d.y * bezier[3] / 127.0))
-
-    @staticmethod
     def __fixFcurveHandles(fcurve):
         kp0 = fcurve.keyframe_points[0]
         kp0.handle_left_type = "FREE"
@@ -469,6 +449,78 @@ class VMDImporter:
 
         return fcurve
 
+    def __setBatchInterpolation(self, fcurves, sorted_interps, indices, num_frame, extra_frame, frames_with_offset):
+        """Fully batched interpolation setting"""
+        total_keyframes = extra_frame + num_frame
+        start_frame_idx = 1 if extra_frame else 0
+
+        # Predefined enumeration values
+        INTERPOLATION_BEZIER = 2
+        INTERPOLATION_LINEAR = 1
+        HANDLE_FREE = 0
+
+        for axis in range(len(fcurves)):
+            fcurve = fcurves[axis]
+            keyframes = fcurve.keyframe_points
+
+            # Prepare batch data arrays
+            interpolation_data = [INTERPOLATION_BEZIER] * total_keyframes
+            handle_left_type_data = [HANDLE_FREE] * total_keyframes
+            handle_right_type_data = [HANDLE_FREE] * total_keyframes
+            handle_left_data = np.zeros(total_keyframes * 2, dtype=np.float32)
+            handle_right_data = np.zeros(total_keyframes * 2, dtype=np.float32)
+
+            # Set interpolation for extra frame
+            if extra_frame:
+                interpolation_data[0] = INTERPOLATION_LINEAR
+                # Handle positions for extra frame (horizontal)
+                handle_left_data[0] = 0.0  # frame
+                handle_left_data[1] = keyframes[0].co.y  # value
+                handle_right_data[0] = 2.0  # frame
+                handle_right_data[1] = keyframes[0].co.y  # value
+
+            # Batch calculate all interpolation handle positions
+            for i in range(num_frame):
+                kf_idx = i + start_frame_idx
+                if kf_idx == 0:
+                    continue
+
+                prev_kf_idx = kf_idx - 1
+
+                # Get keyframe coordinates (from already set data)
+                curr_co = keyframes[kf_idx].co
+                prev_co = keyframes[prev_kf_idx].co
+
+                # Calculate interpolation handles
+                interp = sorted_interps[i]
+                idx = indices[axis]
+                bezier = interp[idx : idx + 16 : 4]
+
+                # Check if needs to be reset to linear
+                if abs(curr_co.y - prev_co.y) < 1e-4 or (bezier[0] == bezier[1] and bezier[2] == bezier[3]):
+                    bezier = [20, 20, 107, 107]
+
+                # Calculate handle positions
+                d_frame = curr_co.x - prev_co.x
+                d_value = curr_co.y - prev_co.y
+
+                # Set right handle of previous keyframe
+                handle_right_data[prev_kf_idx * 2] = prev_co.x + d_frame * bezier[0] / 127.0
+                handle_right_data[prev_kf_idx * 2 + 1] = prev_co.y + d_value * bezier[1] / 127.0
+
+                # Set left handle of current keyframe
+                handle_left_data[kf_idx * 2] = prev_co.x + d_frame * bezier[2] / 127.0
+                handle_left_data[kf_idx * 2 + 1] = prev_co.y + d_value * bezier[3] / 127.0
+
+            # Set all properties in one batch operation
+            fcurve.keyframe_points.foreach_set("interpolation", interpolation_data)
+            fcurve.keyframe_points.foreach_set("handle_left_type", handle_left_type_data)
+            fcurve.keyframe_points.foreach_set("handle_right_type", handle_right_type_data)
+            fcurve.keyframe_points.foreach_set("handle_left", handle_left_data)
+            fcurve.keyframe_points.foreach_set("handle_right", handle_right_data)
+
+            fcurve.update()
+
     def __assignToArmature(self, armObj, action_name=None):
         boneAnim = self.__vmdFile.boneAnimation
         logging.info("---- bone animations:%5d  target: %s", len(boneAnim), armObj.name)
@@ -495,79 +547,110 @@ class VMDImporter:
         class _Dummy:
             pass
 
-        dummy_keyframe_points = iter(lambda: _Dummy, None)
         prop_rot_map = {"QUATERNION": "rotation_quaternion", "AXIS_ANGLE": "rotation_axis_angle"}
-
         bone_name_table = {}
-        for name, keyFrames in boneAnim.items():
-            num_frame = len(keyFrames)
-            if num_frame < 1:
-                continue
+
+        for name, bone_numpy_data in boneAnim.items():
+            num_frame = len(bone_numpy_data)
             bone = pose_bones.get(name, None)
             if bone is None:
-                logging.warning("WARNING: not found bone %s (%d frames)", name, len(keyFrames))
+                logging.warning("WARNING: not found bone %s (%d frames)", name, num_frame)
                 continue
-            logging.info("(bone) frames:%5d  name: %s", len(keyFrames), name)
+            logging.info("(bone) frames:%5d  name: %s", num_frame, name)
             assert bone_name_table.get(bone.name, name) == name
             bone_name_table[bone.name] = name
 
-            fcurves = [dummy_keyframe_points] * 7  # x, y, z, r0, r1, r2, (r3)
+            # Extract data directly from numpy arrays
+            frame_numbers = bone_numpy_data["frame"]
+            locations = bone_numpy_data["location"]
+            rotations = bone_numpy_data["rotation"]
+            interpolations = bone_numpy_data["interp"]
+
+            # Sort by frame number (vectorized numpy operation)
+            sort_indices = np.argsort(frame_numbers)
+            sorted_frames = frame_numbers[sort_indices]
+            sorted_locations = locations[sort_indices]
+            sorted_rotations = rotations[sort_indices]
+            sorted_interps = interpolations[sort_indices]
+
+            # Create F-Curves
+            fcurves = []
             data_path_rot = prop_rot_map.get(bone.rotation_mode, "rotation_euler")
             bone_rotation = getattr(bone, data_path_rot)
             default_values = list(bone.location) + list(bone_rotation)
+
+            # Create location FCurves
             data_path = 'pose.bones["%s"].location' % bone.name
             for axis_i in range(3):
-                fcurves[axis_i] = self.__get_or_create_fcurve(action, data_path, axis_i, bone.name)
+                fcurve = self.__get_or_create_fcurve(action, data_path, axis_i, bone.name)
+                fcurves.append(fcurve)
+
+            # Create rotation FCurves
             data_path = 'pose.bones["%s"].%s' % (bone.name, data_path_rot)
             for axis_i in range(len(bone_rotation)):
-                fcurves[3 + axis_i] = self.__get_or_create_fcurve(action, data_path, axis_i, bone.name)
-
-            for i in range(len(default_values)):
-                c = fcurves[i]
-                original_count = len(c.keyframe_points)
-                c.keyframe_points.add(extra_frame + num_frame)
-                new_keyframes = c.keyframe_points[original_count:]
-                kp_iter = iter(new_keyframes)
-                if extra_frame:
-                    kp = next(kp_iter)
-                    kp.co = (1, default_values[i])
-                    kp.interpolation = "LINEAR"
-                fcurves[i] = kp_iter
+                fcurve = self.__get_or_create_fcurve(action, data_path, axis_i, bone.name)
+                fcurves.append(fcurve)
 
             converter = self.__getBoneConverter(bone)
             prev_rot = bone_rotation if extra_frame else None
-            prev_kps, indices = None, tuple(converter.convert_interpolation((0, 16, 32))) + (48,) * len(bone_rotation)
-            keyFrames.sort(key=lambda x: x.frame_number)
-            for k, x, y, z, r0, r1, r2, r3 in zip(keyFrames, *fcurves, strict=False):
-                frame = k.frame_number + self.__frame_start + self.__frame_margin
-                loc = converter.convert_location(_loc(k.location))
-                curr_rot = converter.convert_rotation(_rot(k.rotation))
-                if prev_rot is not None:
-                    curr_rot = converter.compatible_rotation(prev_rot, curr_rot)
-                    # FIXME the rotation interpolation has slightly different result
-                    #   Blender: rot(x) = prev_rot*(1 - bezier(t)) + curr_rot*bezier(t)
-                    #       MMD: rot(x) = prev_rot.slerp(curr_rot, factor=bezier(t))
-                prev_rot = curr_rot
 
-                x.co = (frame, loc[0])
-                y.co = (frame, loc[1])
-                z.co = (frame, loc[2])
-                r0.co = (frame, curr_rot[0])
-                r1.co = (frame, curr_rot[1])
-                r2.co = (frame, curr_rot[2])
-                r3.co = (frame, curr_rot[-1])
+            # Pre-compute all transformed data
+            frames_with_offset = sorted_frames + self.__frame_start + self.__frame_margin
 
-                curr_kps = (x, y, z, r0, r1, r2, r3)
-                if prev_kps is not None:
-                    interp = k.interp
-                    for idx, prev_kp, kp in zip(indices, prev_kps, curr_kps, strict=False):
-                        self.__setInterpolation(interp[idx : idx + 16 : 4], prev_kp, kp)
-                prev_kps = curr_kps
+            # Transform all locations at once
+            transformed_locations = np.zeros((num_frame, 3), dtype=np.float64)
+            for i in range(num_frame):
+                loc = converter.convert_location(_loc(sorted_locations[i]))
+                transformed_locations[i] = [loc[0], loc[1], loc[2]]
+
+            # Transform all rotations at once
+            transformed_rotations = np.zeros((num_frame, len(bone_rotation)), dtype=np.float64)
+            prev_rot_working = prev_rot
+            for i in range(num_frame):
+                curr_rot = converter.convert_rotation(_rot(sorted_rotations[i]))
+                if prev_rot_working is not None:
+                    curr_rot = converter.compatible_rotation(prev_rot_working, curr_rot)
+                prev_rot_working = curr_rot
+                transformed_rotations[i] = curr_rot[:len(bone_rotation)]
+
+            total_keyframes = extra_frame + num_frame
+
+            for axis in range(len(default_values)):
+                fcurve = fcurves[axis]
+
+                # Clear existing keyframes
+                fcurve.keyframe_points.clear()
+
+                # Add all keyframes at once
+                fcurve.keyframe_points.add(total_keyframes)
+
+                # Prepare coordinate data
+                coord_data = np.empty(total_keyframes * 2, dtype=np.float32)
+
+                if extra_frame:
+                    coord_data[0] = 1  # frame
+                    coord_data[1] = default_values[axis]  # value
+                    start_idx = 2
+                else:
+                    start_idx = 0
+
+                # Set main frames
+                coord_data[start_idx::2] = frames_with_offset
+                if axis < 3:
+                    coord_data[start_idx + 1::2] = transformed_locations[:, axis]
+                else:
+                    coord_data[start_idx + 1::2] = transformed_rotations[:, axis - 3]
+
+                # Batch set coordinates
+                fcurve.keyframe_points.foreach_set("co", coord_data)
+
+            indices = tuple(converter.convert_interpolation((0, 16, 32))) + (48,) * len(bone_rotation)
+            self.__setBatchInterpolation(fcurves, sorted_interps, indices, num_frame, extra_frame, frames_with_offset)
 
         for c in action.fcurves:
             self.__fixFcurveHandles(c)
 
-        # property animation
+        # Property animation processing
         propertyAnim = self.__vmdFile.propertyAnimation
         if len(propertyAnim) > 0:
             logging.info("---- IK animations:%5d  target: %s", len(propertyAnim), armObj.name)
@@ -583,7 +666,7 @@ class VMDImporter:
 
         self.__assign_action(armObj, action)
 
-        # Ensure IK toggle state is set based on the first frame of VMD animation
+        # Set IK toggle state based on first frame
         if len(propertyAnim) > 0:
             # Collect IK states from the first frame
             first_frame_ik_states = {}
@@ -623,32 +706,45 @@ class VMDImporter:
             for morph_type in ["vertex_morphs", "uv_morphs", "bone_morphs", "material_morphs", "group_morphs"]:
                 model_morph_names.update(morph.name for morph in getattr(mmd_root, morph_type, []))
 
-        for name, keyFrames in shapeKeyAnim.items():
+        for name, shape_numpy_data in shapeKeyAnim.items():
+            num_frame = len(shape_numpy_data)
             if name not in shapeKeyDict:
                 # Check if model has this morph registered but not set up
                 if name in model_morph_names:
                     # Model has the morph but it's not assembled
-                    logging.warning("WARNING: not found shape key %s (%d frames) - model has this morph but needs assembly", name, len(keyFrames))
+                    logging.warning("WARNING: not found shape key %s (%d frames) - model has this morph but needs assembly", name, num_frame)
                 else:
                     # Model doesn't have this morph at all
-                    logging.warning("WARNING: not found shape key %s (%d frames) - model doesn't have this morph", name, len(keyFrames))
+                    logging.warning("WARNING: not found shape key %s (%d frames) - model doesn't have this morph", name, num_frame)
                 continue
-            logging.info("(mesh) frames:%5d  name: %s", len(keyFrames), name)
+            logging.info("(mesh) frames:%5d  name: %s", num_frame, name)
             shapeKey = shapeKeyDict[name]
             data_path = 'key_blocks["%s"].value' % shapeKey.name
             fcurve = self.__get_or_create_fcurve(action, data_path, 0)
 
+            # Extract data directly from numpy arrays
+            frame_numbers = shape_numpy_data["frame"]
+            weights = shape_numpy_data["weight"]
+
+            # Sort by frame number (vectorized numpy operation)
+            sort_indices = np.argsort(frame_numbers)
+            sorted_frames = frame_numbers[sort_indices]
+            sorted_weights = weights[sort_indices]
+
             original_count = len(fcurve.keyframe_points)
-            fcurve.keyframe_points.add(len(keyFrames))
+            fcurve.keyframe_points.add(len(shape_numpy_data))
             new_keyframes = fcurve.keyframe_points[original_count:]
 
-            keyFrames.sort(key=lambda x: x.frame_number)
-            for k, v in zip(keyFrames, new_keyframes, strict=False):
-                v.co = (k.frame_number + self.__frame_start + self.__frame_margin, k.weight)
-                v.interpolation = "LINEAR"
-            weights = tuple(i.weight for i in keyFrames)
-            shapeKey.slider_min = min(shapeKey.slider_min, math.floor(min(weights)))
-            shapeKey.slider_max = max(shapeKey.slider_max, math.ceil(max(weights)))
+            # Batch set keyframes
+            for i, keyframe_point in enumerate(new_keyframes):
+                frame = sorted_frames[i] + self.__frame_start + self.__frame_margin
+                weight = sorted_weights[i]
+                keyframe_point.co = (frame, weight)
+                keyframe_point.interpolation = "LINEAR"
+
+            # Update slider range using numpy operations
+            shapeKey.slider_min = min(shapeKey.slider_min, math.floor(float(np.min(weights))))
+            shapeKey.slider_max = max(shapeKey.slider_max, math.ceil(float(np.max(weights))))
 
         self.__assign_action(meshObj.data.shape_keys, action)
 
@@ -715,6 +811,26 @@ class VMDImporter:
             new_keyframes = c.keyframe_points[original_count:]
             new_keyframe_iterators.append(iter(new_keyframes))
 
+        def __setInterpolation(bezier, kp0, kp1):
+            # Always use BEZIER to match Blender's default behavior
+            kp0.interpolation = "BEZIER"
+            kp0.handle_right_type = "FREE"
+            kp1.handle_left_type = "FREE"
+
+            d = kp1.co - kp0.co
+            dy = d.y
+
+            # Reset handles if the value doesn't change much (dy is small enough) or the bezier is linear
+            # When dy is small enough, the curve is meaningless and will lose data during import; there's no difference in resetting it
+            # When the bezier is linear, the resulting curve is equivalent to the original
+            if abs(dy) < 1e-4 or (bezier[0] == bezier[1] and bezier[2] == bezier[3]):
+                bezier = [20, 20, 107, 107]
+
+            # Always multiply before dividing to reduce precision errors
+            d = kp1.co - kp0.co
+            kp0.handle_right = kp0.co + Vector((d.x * bezier[0] / 127.0, d.y * bezier[1] / 127.0))
+            kp1.handle_left = kp0.co + Vector((d.x * bezier[2] / 127.0, d.y * bezier[3] / 127.0))
+
         prev_kps, indices = None, (0, 8, 4, 12, 12, 12, 16, 20)  # x, z, y, rx, ry, rz, dis, fov
         cameraAnim.sort(key=lambda x: x.frame_number)
         for k, x, y, z, rx, ry, rz, fov, persp, dis in zip(cameraAnim, *new_keyframe_iterators, strict=False):
@@ -730,7 +846,7 @@ class VMDImporter:
             if prev_kps is not None:
                 interp = k.interp
                 for idx, prev_kp, kp in zip(indices, prev_kps, curr_kps, strict=False):
-                    self.__setInterpolation(interp[idx : idx + 4 : 2] + interp[idx + 1 : idx + 4 : 2], prev_kp, kp)
+                    __setInterpolation(interp[idx : idx + 4 : 2] + interp[idx + 1 : idx + 4 : 2], prev_kp, kp)
             prev_kps = curr_kps
 
         for fcurve in fcurves:
