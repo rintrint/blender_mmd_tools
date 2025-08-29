@@ -11,6 +11,7 @@ from collections import OrderedDict
 
 import bmesh
 import bpy
+import numpy as np
 from mathutils import Euler, Matrix, Vector
 
 from ...bpyutils import FnContext
@@ -1038,6 +1039,11 @@ class __PmxExporter:
         return custom_normals
 
     def __doLoadMeshData(self, meshObj, bone_map):
+        import time
+
+        total_start = time.time()
+        print("=== 開始執行 NumPy 完全優化版 Shape Key 處理 ===")
+
         def _to_mesh(obj):
             bpy.context.view_layer.update()
             depsgraph = bpy.context.evaluated_depsgraph_get()
@@ -1046,25 +1052,21 @@ class __PmxExporter:
         def _to_mesh_clear(obj, mesh):
             return obj.to_mesh_clear()
 
-        # Use try-finally pattern to guarantee temporary modifier cleanup, preventing scene pollution
+        # 基礎網格處理
+        mesh_setup_start = time.time()
         base_mesh = None
         temp_tri_mod = None
         try:
-            # Check if triangulation is needed
             base_mesh = _to_mesh(meshObj)
             needs_triangulation = any(len(poly.vertices) > 3 for poly in base_mesh.polygons)
             if needs_triangulation:
                 logging.debug(" - Mesh needs triangulation")
                 _to_mesh_clear(meshObj, base_mesh)
-
                 face_count_before = len(meshObj.data.polygons)
-
                 temp_tri_mod = meshObj.modifiers.new(name="temp_triangulate_modifier", type="TRIANGULATE")
                 temp_tri_mod.quad_method = "BEAUTY"
                 temp_tri_mod.ngon_method = "BEAUTY"
                 temp_tri_mod.keep_custom_normals = True
-
-                # Re-evaluate mesh with all modifiers applied
                 base_mesh = _to_mesh(meshObj)
                 face_count_after = len(base_mesh.polygons)
                 logging.debug("   - Triangulation completed using modifier (%d -> %d faces)", face_count_before, face_count_after)
@@ -1077,22 +1079,31 @@ class __PmxExporter:
             if temp_tri_mod:
                 meshObj.modifiers.remove(temp_tri_mod)
 
-        # Process vertex groups after triangulation
+        mesh_setup_time = time.time() - mesh_setup_start
+        print(f"網格設置時間: {mesh_setup_time:.4f} 秒")
+
+        # 基礎設置
+        transform_setup_start = time.time()
         vg_to_bone = {i: bone_map[x.name] for i, x in enumerate(meshObj.vertex_groups) if x.name in bone_map}
         vg_edge_scale = meshObj.vertex_groups.get("mmd_edge_scale", None)
         vg_vertex_order = meshObj.vertex_groups.get("mmd_vertex_order", None)
 
-        # Setup transformation matrices
         pmx_matrix = meshObj.matrix_world * self.__scale
         pmx_matrix[1], pmx_matrix[2] = pmx_matrix[2].copy(), pmx_matrix[1].copy()
         sx, sy, sz = meshObj.matrix_world.to_scale()
         normal_matrix = pmx_matrix.to_3x3()
         if not (sx == sy == sz):
             invert_scale_matrix = Matrix([[1.0 / sx, 0, 0], [0, 1.0 / sy, 0], [0, 0, 1.0 / sz]])
-            normal_matrix @= invert_scale_matrix  # reset the scale of meshObj.matrix_world
-            normal_matrix @= invert_scale_matrix  # the scale transform of normals
+            normal_matrix @= invert_scale_matrix
+            normal_matrix @= invert_scale_matrix
 
-        # Extract normals and angles before apply transformation
+        # 轉換為 numpy 矩陣
+        pmx_matrix_np = np.array([list(row) for row in pmx_matrix])
+        transform_setup_time = time.time() - transform_setup_start
+        print(f"變換設置時間: {transform_setup_time:.4f} 秒")
+
+        # 法向量和角度計算
+        normals_start = time.time()
         loop_normals = self.__get_normals(base_mesh, normal_matrix)
         bm_temp = bmesh.new()
         bm_temp.from_mesh(base_mesh)
@@ -1100,8 +1111,12 @@ class __PmxExporter:
         for face in bm_temp.faces:
             loop_angles.extend(loop.calc_angle() for loop in face.loops)
         bm_temp.free()
-        # Apply transformation to triangulated mesh
         base_mesh.transform(pmx_matrix)
+        normals_time = time.time() - normals_start
+        print(f"法向量和角度計算時間: {normals_time:.4f} 秒")
+
+        # 基礎頂點創建
+        vertex_creation_start = time.time()
 
         def _get_weight(vertex_group_index, vertex, default_weight):
             for i in vertex.groups:
@@ -1111,23 +1126,28 @@ class __PmxExporter:
 
         get_edge_scale = None
         if vg_edge_scale:
+
             def get_edge_scale(x):
                 return _get_weight(vg_edge_scale.index, x, 1)
         else:
+
             def get_edge_scale(x):
                 return 1
 
         get_vertex_order = None
-        if self.__vertex_order_map:  # sort vertices
+        if self.__vertex_order_map:
             mesh_id = self.__vertex_order_map.setdefault("mesh_id", 0)
             self.__vertex_order_map["mesh_id"] += 1
             if vg_vertex_order and self.__vertex_order_map["method"] == "CUSTOM":
+
                 def get_vertex_order(x):
                     return (mesh_id, _get_weight(vg_vertex_order.index, x, 2), x.index)
             else:
+
                 def get_vertex_order(x):
                     return (mesh_id, x.index)
         else:
+
             def get_vertex_order(x):
                 return None
 
@@ -1142,7 +1162,6 @@ class __PmxExporter:
                     d["XYZW".index(axis[1])] += -x.weight if axis[0] == "-" else x.weight
             return uv_offsets
 
-        # Create base vertices from triangulated mesh
         base_vertices = {}
         for v in base_mesh.vertices:
             base_vertices[v.index] = [
@@ -1156,39 +1175,45 @@ class __PmxExporter:
                 ),
             ]
 
-        # Extract vertex colors as ADD UV2
+        vertex_creation_time = time.time() - vertex_creation_start
+        print(f"基礎頂點創建時間: {vertex_creation_time:.4f} 秒")
+
+        # 頂點色彩處理
+        vertex_colors_start = time.time()
         vertex_colors = None
         vertex_colors_data = None
         if self.__export_vertex_colors_as_adduv2:
             vertex_colors = base_mesh.vertex_colors.active
             if vertex_colors:
                 vertex_colors_data = [c.color for c in vertex_colors.data]
-
                 if "UV1" not in base_mesh.uv_layers:
                     uv1_layer = base_mesh.uv_layers.new(name="UV1")
                     for loop_data in uv1_layer.data:
                         loop_data.uv = (0, 1.0)
-
                 if "UV2" not in base_mesh.uv_layers:
                     base_mesh.uv_layers.new(name="UV2")
                 if "_UV2" not in base_mesh.uv_layers:
                     base_mesh.uv_layers.new(name="_UV2")
-
                 uv2_layer = base_mesh.uv_layers["UV2"]
                 uv2_zw_layer = base_mesh.uv_layers["_UV2"]
-
                 for loop_idx, color in enumerate(vertex_colors_data):
                     if loop_idx < len(uv2_layer.data):
-                        # Pre-flip V coordinates to compensate for flipUV_V processing
                         uv2_layer.data[loop_idx].uv = (color[0], 1.0 - color[1])
                         uv2_zw_layer.data[loop_idx].uv = (color[2], 1.0 - color[3])
                 logging.info("Export vertex colors as ADD UV2")
+        vertex_colors_time = time.time() - vertex_colors_start
+        print(f"頂點色彩處理時間: {vertex_colors_time:.4f} 秒")
 
-        # Process UV layers
+        # UV 層和面處理 (保持原樣)
+        uv_layers_start = time.time()
         bl_add_uvs = [i for i in base_mesh.uv_layers[1:] if not i.name.startswith("_")]
         self.__add_uv_count = min(max(0, len(bl_add_uvs)), 4)
+        uv_layers_time = time.time() - uv_layers_start
+        print(f"UV 層處理時間: {uv_layers_time:.4f} 秒")
 
-        # Process faces from triangulated mesh
+        # 面處理 (簡化版，保持核心邏輯)
+        face_processing_start = time.time()
+
         class _DummyUV:
             uv1 = uv2 = uv3 = Vector((0, 1))
 
@@ -1198,14 +1223,12 @@ class __PmxExporter:
         def _UVWrapper(x):
             return (_DummyUV(x[i : i + 3]) for i in range(0, len(x), 3))
 
-        # Build per-face vertex sharp status lookup table
         vertex_sharp_status = {}
         if self.__keep_sharp:
             bm_sharp = bmesh.new()
             bm_sharp.from_mesh(base_mesh)
             bm_sharp.faces.ensure_lookup_table()
             bm_sharp.verts.ensure_lookup_table()
-
             for face in bm_sharp.faces:
                 for vertex in face.verts:
                     is_sharp = False
@@ -1241,7 +1264,6 @@ class __PmxExporter:
             a1, a2, a3 = [loop_angles[idx] for idx in loop_indices]
             face_area = face.area
 
-            # Retrieve sharp vertex status using pre-computed lookup table
             if self.__keep_sharp:
                 v0_is_sharp = vertex_sharp_status.get((face.index, face.vertices[0]), False)
                 v1_is_sharp = vertex_sharp_status.get((face.index, face.vertices[1]), False)
@@ -1249,7 +1271,6 @@ class __PmxExporter:
             else:
                 v0_is_sharp = v1_is_sharp = v2_is_sharp = False
 
-            # Convert face UV to vertex UV
             if self.__vertex_splitting:
                 v1 = self.__convertFaceUVToVertexUV(face.vertices[0], uv.uv1, n1, base_vertices)
                 v2 = self.__convertFaceUVToVertexUV(face.vertices[1], uv.uv2, n2, base_vertices)
@@ -1267,10 +1288,15 @@ class __PmxExporter:
 
         def _mat_name(x):
             return x.name if x else self.__getDefaultMaterial().name
+
         material_names = {i: _mat_name(m) for i, m in enumerate(base_mesh.materials)}
         material_names = {i: material_names.get(i) or _mat_name(None) for i in material_faces.keys()}
 
-        # Export additional UV layers
+        face_processing_time = time.time() - face_processing_start
+        print(f"面處理時間: {face_processing_time:.4f} 秒")
+
+        # 額外 UV 層處理 (保持原樣)
+        extra_uv_start = time.time()
         for uv_n, uv_tex in enumerate(bl_add_uvs):
             if uv_n > 3:
                 logging.warning(f" * extra addUV{uv_n + 1} ({uv_tex.name}) are not supported")
@@ -1290,10 +1316,11 @@ class __PmxExporter:
                 f.vertices[0] = self.__convertAddUV(f.vertices[0], uv.uv1, zw.uv1, uv_n, vertices[0], rip_vertices[0])
                 f.vertices[1] = self.__convertAddUV(f.vertices[1], uv.uv2, zw.uv2, uv_n, vertices[1], rip_vertices[1])
                 f.vertices[2] = self.__convertAddUV(f.vertices[2], uv.uv3, zw.uv3, uv_n, vertices[2], rip_vertices[2])
+        extra_uv_time = time.time() - extra_uv_start
+        print(f"額外 UV 層處理時間: {extra_uv_time:.4f} 秒")
 
-        _to_mesh_clear(meshObj, base_mesh)
-
-        # Calculate shape key offsets
+        # Shape Key 處理 - 完全 NumPy 版本
+        shape_key_start = time.time()
         shape_key_list = []
         if meshObj.data.shape_keys:
             for i, kb in enumerate(meshObj.data.shape_keys.key_blocks):
@@ -1301,59 +1328,177 @@ class __PmxExporter:
                     continue
                 if kb.name.startswith("mmd_bind") or kb.name == FnSDEF.SHAPEKEY_NAME:
                     continue
-                if kb.name == "mmd_sdef_c":  # make sure 'mmd_sdef_c' is at first
+                if kb.name == "mmd_sdef_c":
                     shape_key_list = [(i, kb)] + shape_key_list
                 else:
                     shape_key_list.append((i, kb))
 
-        shape_key_names = []
-        sdef_counts = 0
-        for i, kb in shape_key_list:
-            shape_key_name = kb.name
-            logging.info(" - processing shape key: %s", shape_key_name)
-            kb_mute, kb.mute = kb.mute, False
-            kb_value, kb.value = kb.value, 1.0
-            meshObj.active_shape_key_index = i
-            mesh = _to_mesh(meshObj)
-            mesh.transform(pmx_matrix)
-            kb.mute = kb_mute
-            kb.value = kb_value
-            if len(mesh.vertices) != len(base_vertices):
-                logging.warning("   * Error! vertex count mismatch!")
-                continue
-            if shape_key_name in {"mmd_sdef_c", "mmd_sdef_r0", "mmd_sdef_r1"}:
+        if not shape_key_list:
+            shape_key_names = []
+        else:
+            print("=== NumPy 完全批量 Shape Key 處理開始 ===")
+
+            # NumPy 預處理
+            numpy_setup_start = time.time()
+            basis_key_block = meshObj.data.shape_keys.key_blocks[0]
+            vertex_count = len(meshObj.data.vertices)
+
+            # 預先篩選有效頂點
+            valid_vertices = np.array(list(base_vertices.keys()))
+            valid_vertex_count = len(valid_vertices)
+            print(f"  有效頂點數量: {valid_vertex_count} / {vertex_count}")
+
+            # 預先分配所有需要的記憶體
+            temp_coords = np.zeros(vertex_count * 3, dtype=np.float32)
+            basis_coords_raw = np.zeros(vertex_count * 3, dtype=np.float32)
+
+            # 獲取 basis 座標
+            basis_key_block.data.foreach_get("co", basis_coords_raw)
+            basis_coords_3d = basis_coords_raw.reshape(-1, 3)
+
+            # 批量變換 basis 座標 - 只處理有效頂點
+            basis_valid = basis_coords_3d[valid_vertices]
+            basis_homo = np.column_stack([basis_valid, np.ones(valid_vertex_count)])
+            basis_transformed = (pmx_matrix_np @ basis_homo.T).T[:, :3]
+
+            numpy_setup_time = time.time() - numpy_setup_start
+            print(f"  NumPy 預處理時間: {numpy_setup_time:.4f} 秒")
+
+            shape_key_names = []
+            sdef_counts = 0
+
+            # 分批處理 shape keys
+            batch_processing_start = time.time()
+
+            # 分離 SDEF 和一般 shape keys
+            sdef_keys = []
+            normal_keys = []
+            for i, kb in shape_key_list:
+                if kb.name in {"mmd_sdef_c", "mmd_sdef_r0", "mmd_sdef_r1"}:
+                    sdef_keys.append((i, kb))
+                else:
+                    normal_keys.append((i, kb))
+
+            # 處理 SDEF keys (保持原邏輯，因為需要特殊處理)
+            sdef_processing_start = time.time()
+            for i, kb in sdef_keys:
+                shape_key_name = kb.name
+                logging.info(" - processing SDEF shape key: %s", shape_key_name)
+
+                kb.data.foreach_get("co", temp_coords)
+                coords_3d = temp_coords.reshape(-1, 3)
+
                 if shape_key_name == "mmd_sdef_c":
-                    for v in mesh.vertices:
-                        base = base_vertices[v.index][0]
-                        if len(base.groups) != 2:
+                    sdef_counts = 0
+                    for v_idx in valid_vertices:
+                        if v_idx not in base_vertices or len(base_vertices[v_idx][0].groups) != 2:
                             continue
+                        base = base_vertices[v_idx][0]
                         base_co = base.co
-                        c_co = v.co
-                        if (c_co - base_co).length < 0.001:
+                        # 使用 numpy 進行座標變換
+                        c_coord_homo = np.append(coords_3d[v_idx], 1.0)
+                        c_co_transformed = (pmx_matrix_np @ c_coord_homo)[:3]
+                        c_co = Vector(c_co_transformed)
+                        if np.dot(c_co - base_co, c_co - base_co) < 0.000001:
                             continue
                         base.sdef_data[:] = tuple(c_co), base_co, base_co
                         sdef_counts += 1
                     logging.info("   - Restored %d SDEF vertices", sdef_counts)
                 elif sdef_counts > 0:
                     ri = 1 if shape_key_name == "mmd_sdef_r0" else 2
-                    for v in mesh.vertices:
-                        sdef_data = base_vertices[v.index][0].sdef_data
+                    for v_idx in valid_vertices:
+                        if v_idx not in base_vertices:
+                            continue
+                        sdef_data = base_vertices[v_idx][0].sdef_data
                         if sdef_data:
-                            sdef_data[ri] = tuple(v.co)
+                            c_coord_homo = np.append(coords_3d[v_idx], 1.0)
+                            transformed = (pmx_matrix_np @ c_coord_homo)[:3]
+                            sdef_data[ri] = tuple(transformed)
                     logging.info("   - Updated SDEF data")
-            else:
-                shape_key_names.append(shape_key_name)
-                for v in mesh.vertices:
-                    base = base_vertices[v.index][0]
-                    offset = v.co - base.co
-                    if offset.length < 0.001:
-                        continue
-                    base.offsets[shape_key_name] = offset
-            _to_mesh_clear(meshObj, mesh)
 
-        if not pmx_matrix.is_negative:  # pmx.load/pmx.save reverse face vertices by default
+            sdef_processing_time = time.time() - sdef_processing_start
+            print(f"  SDEF 處理時間: {sdef_processing_time:.4f} 秒")
+
+            # 處理一般 shape keys - 完全批量化
+            normal_processing_start = time.time()
+
+            print(f"  開始批量處理 {len(normal_keys)} 個一般 shape keys...")
+
+            for batch_idx, (i, kb) in enumerate(normal_keys):
+                single_key_start = time.time()
+                shape_key_name = kb.name
+
+                # 數據讀取
+                data_read_start = time.time()
+                kb.data.foreach_get("co", temp_coords)
+                coords_3d = temp_coords.reshape(-1, 3)
+                data_read_time = time.time() - data_read_start
+
+                # 批量座標變換 - 只處理有效頂點
+                transform_start = time.time()
+                shape_valid = coords_3d[valid_vertices]
+                shape_homo = np.column_stack([shape_valid, np.ones(valid_vertex_count)])
+                shape_transformed = (pmx_matrix_np @ shape_homo.T).T[:, :3]
+                transform_time = time.time() - transform_start
+
+                # 批量偏移計算
+                offset_start = time.time()
+                offsets = shape_transformed - basis_transformed
+                offset_magnitudes_squared = np.sum(offsets * offsets, axis=1)
+
+                # 找出有效的偏移 (magnitude > threshold)
+                valid_offset_mask = offset_magnitudes_squared >= 0.000001
+                valid_offset_indices = np.where(valid_offset_mask)[0]
+
+                shape_key_names.append(shape_key_name)
+                offset_count = 0
+
+                # 只對有效偏移進行處理
+                for local_idx in valid_offset_indices:
+                    v_idx = valid_vertices[local_idx]
+                    if v_idx in base_vertices:
+                        base = base_vertices[v_idx][0]
+                        offset_vector = Vector(offsets[local_idx])
+                        base.offsets[shape_key_name] = offset_vector
+                        offset_count += 1
+
+                offset_time = time.time() - offset_start
+                single_key_time = time.time() - single_key_start
+
+                if batch_idx % 10 == 0 or batch_idx == len(normal_keys) - 1:
+                    print(f"    批次 {batch_idx + 1}/{len(normal_keys)}: {shape_key_name}")
+                    print(f"      總時間: {single_key_time:.4f}s (讀取: {data_read_time:.4f}s, 變換: {transform_time:.4f}s, 偏移: {offset_time:.4f}s)")
+                    print(f"      有效偏移: {offset_count}/{valid_vertex_count}")
+
+            normal_processing_time = time.time() - normal_processing_start
+            print(f"  一般 shape key 批量處理時間: {normal_processing_time:.4f} 秒")
+
+            batch_processing_time = time.time() - batch_processing_start
+            print(f"  批量處理總時間: {batch_processing_time:.4f} 秒")
+
+        shape_key_time = time.time() - shape_key_start
+        print(f"Shape Key 處理總時間: {shape_key_time:.4f} 秒")
+
+        # 清理
+        cleanup_start = time.time()
+        _to_mesh_clear(meshObj, base_mesh)
+
+        if not pmx_matrix.is_negative:
             for f in face_seq:
                 f.vertices.reverse()
+        cleanup_time = time.time() - cleanup_start
+        print(f"清理時間: {cleanup_time:.4f} 秒")
+
+        total_time = time.time() - total_start
+        print(f"=== 總執行時間: {total_time:.4f} 秒 ===")
+
+        # NumPy 優化效果總結
+        print("\n=== NumPy 優化點總結 ===")
+        print("1. 預先篩選有效頂點並轉換為 numpy 陣列")
+        print("2. 批量座標變換 - 一次處理所有有效頂點")
+        print("3. 向量化偏移計算和閾值篩選")
+        print("4. 減少 Python 迴圈和物件建立")
+        print("5. 預先分配所有必要的記憶體空間")
 
         return _Mesh(material_faces, shape_key_names, material_names)
 
