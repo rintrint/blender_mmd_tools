@@ -169,20 +169,20 @@ jobs:
 
           blender --background --python verify_import.py
 
-      - name: Run single test example
+      - name: Run critical tests with verbose output
         run: |
-          echo "Running single test example..."
+          echo "Running a few critical tests with full output for detailed debugging..."
           blender --background -noaudio --python tests/test_fileio_operators.py -- --verbose
           blender --background -noaudio --python tests/test_rigid_body.py -- --verbose
           blender --background -noaudio --python tests/test_utils_unit.py -- --verbose
 
       - name: Conditionally skip hard test for older Blender versions
-        if: contains(['4.2', '4.3', '4.4'], matrix.blender_version)
+        if: matrix.blender_version == '4.2' || matrix.blender_version == '4.3' || matrix.blender_version == '4.4'
         run: |
           echo "Skipping test_pmx_importer_hard.py for Blender ${{ matrix.blender_version }} due to known issues."
           mv tests/test_pmx_importer_hard.py tests/test_pmx_importer_hard.py.skipped
 
       - name: Run all tests
         run: |
-          echo "Running all tests..."
+          echo "Running all tests with the test runner..."
           blender --background -noaudio --python tests/all_test_runner.py -- --verbose
