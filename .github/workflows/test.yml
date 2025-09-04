@@ -2,14 +2,19 @@ name: Auto Tests
 
 on:
   push:
+    branches:
+      - "**"
     tags-ignore:
-      - '**'
+      - "**"
   pull_request:
   workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        blender_version: ["latest", "4.2"]
 
     steps:
       - name: Checkout
@@ -26,18 +31,24 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y jq > /dev/null 2>&1
 
-      - name: Download latest Blender release
+      - name: Download Blender release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Fetching latest Blender version..."
-          TAGS_RESPONSE=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/blender/blender/tags)
+          if [ "${{ matrix.blender_version }}" = "latest" ]; then
+            echo "Fetching latest Blender version..."
+            TAGS_RESPONSE=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/blender/blender/tags)
+            LATEST_VERSION=$(echo "$TAGS_RESPONSE" | jq -r '.[0].name' | sed 's/^v//')
+          else
+            echo "Fetching latest 4.2.x version..."
+            TAGS_RESPONSE=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/blender/blender/tags)
+            LATEST_VERSION=$(echo "$TAGS_RESPONSE" | jq -r '.[].name' | sed 's/^v//' | grep '^4\.2\.' | sort -V | tail -1)
+          fi
 
-          LATEST_VERSION=$(echo "$TAGS_RESPONSE" | jq -r '.[0].name' | sed 's/^v//')
-          echo "Latest Blender version: ${LATEST_VERSION}"
+          echo "Selected Blender version: ${LATEST_VERSION}"
 
           if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" = "null" ]; then
-            echo "ERROR: Could not fetch latest version from GitHub API"
+            echo "ERROR: Could not fetch version from GitHub API"
             exit 1
           fi
 
@@ -163,19 +174,3 @@ jobs:
         run: |
           echo "Running all tests..."
           blender --background -noaudio --python tests/all_test_runner.py -- --verbose
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-latest-blender
-          path: |
-            tests/**/*.log
-            tests/**/*.xml
-            tests/**/*.txt
-          if-no-files-found: ignore
-
-      - name: Show final status
-        if: always()
-        run: |
-          echo "Test execution completed at $(date)"
