@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        blender_version: ["latest", "4.5", "4.4", "4.3", "4.2", "4.1"]
+        blender_version: ["latest", "4.5", "4.4", "4.3", "4.2"]
 
     steps:
       - name: Checkout
@@ -36,6 +36,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          echo "=== Download Blender release ==="
+
           if [ "${{ matrix.blender_version }}" = "latest" ]; then
             echo "Fetching latest Blender version..."
             TAGS_RESPONSE=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/blender/blender/tags)
