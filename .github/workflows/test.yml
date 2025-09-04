@@ -179,8 +179,8 @@ jobs:
       - name: Conditionally skip hard test for older Blender versions
         if: matrix.blender_version == '4.2' || matrix.blender_version == '4.3' || matrix.blender_version == '4.4'
         run: |
-          echo "Skipping test_pmx_importer_hard.py for Blender ${{ matrix.blender_version }} due to known issues."
-          mv tests/test_pmx_importer_hard.py tests/test_pmx_importer_hard.py.skipped
+          echo "Skipping test_pmx_exporter_hard.py for Blender ${{ matrix.blender_version }} due to known issues."
+          mv tests/test_pmx_exporter_hard.py tests/test_pmx_exporter_hard.py.skipped
 
       - name: Run all tests
         run: |
