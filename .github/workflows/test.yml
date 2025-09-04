@@ -41,15 +41,17 @@ jobs:
             TAGS_RESPONSE=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/blender/blender/tags)
             LATEST_VERSION=$(echo "$TAGS_RESPONSE" | jq -r '.[0].name' | sed 's/^v//')
           else
-            echo "Fetching latest 4.2.x version..."
+            echo "Fetching latest ${{ matrix.blender_version }}.x version..."
             TAGS_RESPONSE=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/blender/blender/tags)
-            LATEST_VERSION=$(echo "$TAGS_RESPONSE" | jq -r '.[].name' | sed 's/^v//' | grep '^4\.2\.' | sort -V | tail -1)
+            LATEST_VERSION=$(echo "$TAGS_RESPONSE" | jq -r '.[].name' | sed 's/^v//' | grep '^${{ matrix.blender_version }}\.' | sort -V | tail -1)
           fi
 
           echo "Selected Blender version: ${LATEST_VERSION}"
 
           if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" = "null" ]; then
-            echo "ERROR: Could not fetch version from GitHub API"
+            echo "ERROR: Could not fetch version ${{ matrix.blender_version }} from GitHub API"
+            echo "Available versions:"
+            echo "$TAGS_RESPONSE" | jq -r '.[].name' | sed 's/^v//' | head -10
             exit 1
           fi
 
@@ -57,6 +59,7 @@ jobs:
           BLENDER_URL="https://download.blender.org/release/Blender${BLENDER_MAJOR}/blender-${LATEST_VERSION}-linux-x64.tar.xz"
 
           echo "Downloading Blender ${LATEST_VERSION}..."
+          echo "${BLENDER_URL}"
           wget -q -O blender.tar.xz "${BLENDER_URL}"
 
           echo "Extracting Blender..."
