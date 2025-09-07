@@ -1204,7 +1204,7 @@ class __PmxExporter:
         vertex_colors_time = time.time() - vertex_colors_start
         print(f"頂點色彩處理時間: {vertex_colors_time:.4f} 秒")
 
-        # UV 層和面處理 (保持原樣)
+        # UV 層處理 (保持原樣)
         uv_layers_start = time.time()
         bl_add_uvs = [i for i in base_mesh.uv_layers[1:] if not i.name.startswith("_")]
         self.__add_uv_count = min(max(0, len(bl_add_uvs)), 4)
@@ -1319,7 +1319,7 @@ class __PmxExporter:
         extra_uv_time = time.time() - extra_uv_start
         print(f"額外 UV 層處理時間: {extra_uv_time:.4f} 秒")
 
-        # Shape Key 處理 - 完全 NumPy 版本
+        # Shape Key 處理 - 修復版本
         shape_key_start = time.time()
         shape_key_list = []
         if meshObj.data.shape_keys:
@@ -1338,28 +1338,31 @@ class __PmxExporter:
         else:
             print("=== NumPy 完全批量 Shape Key 處理開始 ===")
 
-            # NumPy 預處理
+            # NumPy 預處理 - 修復關鍵部分
             numpy_setup_start = time.time()
-            basis_key_block = meshObj.data.shape_keys.key_blocks[0]
-            vertex_count = len(meshObj.data.vertices)
 
-            # 預先篩選有效頂點
-            valid_vertices = np.array(list(base_vertices.keys()))
+            # 使用當前處理後網格的頂點數量，而不是原始網格
+            current_vertex_count = len(base_mesh.vertices)
+
+            # 從當前網格獲取 basis 座標（已經應用了修改器）
+            basis_coords_3d = np.array([v.co for v in base_mesh.vertices])
+
+            # 預先篩選有效頂點 - 確保索引在當前網格範圍內
+            valid_vertices = np.array([k for k in base_vertices.keys() if k < current_vertex_count])
             valid_vertex_count = len(valid_vertices)
-            print(f"  有效頂點數量: {valid_vertex_count} / {vertex_count}")
+            print(f"  有效頂點數量: {valid_vertex_count} / {current_vertex_count}")
 
-            # 預先分配所有需要的記憶體
-            temp_coords = np.zeros(vertex_count * 3, dtype=np.float32)
-            basis_coords_raw = np.zeros(vertex_count * 3, dtype=np.float32)
+            # 檢查是否有超出範圍的頂點索引
+            if len(base_vertices) > current_vertex_count:
+                print(f"  警告: 發現 {len(base_vertices) - current_vertex_count} 個超出範圍的頂點索引，將被跳過")
 
-            # 獲取 basis 座標
-            basis_key_block.data.foreach_get("co", basis_coords_raw)
-            basis_coords_3d = basis_coords_raw.reshape(-1, 3)
-
-            # 批量變換 basis 座標 - 只處理有效頂點
-            basis_valid = basis_coords_3d[valid_vertices]
-            basis_homo = np.column_stack([basis_valid, np.ones(valid_vertex_count)])
-            basis_transformed = (pmx_matrix_np @ basis_homo.T).T[:, :3]
+            # 批量座標變換 - 只處理有效頂點
+            # if valid_vertex_count > 0:
+            #     basis_valid = basis_coords_3d[valid_vertices]
+            #     basis_homo = np.column_stack([basis_valid, np.ones(valid_vertex_count)])
+            #     basis_transformed = (pmx_matrix_np @ basis_homo.T).T[:, :3]
+            # else:
+            #     basis_transformed = np.array([]).reshape(0, 3)
 
             numpy_setup_time = time.time() - numpy_setup_start
             print(f"  NumPy 預處理時間: {numpy_setup_time:.4f} 秒")
@@ -1379,96 +1382,133 @@ class __PmxExporter:
                 else:
                     normal_keys.append((i, kb))
 
-            # 處理 SDEF keys (保持原邏輯，因為需要特殊處理)
+            # 處理 SDEF keys (需要特殊處理，因為要訪問原始shape key數據)
             sdef_processing_start = time.time()
-            for i, kb in sdef_keys:
-                shape_key_name = kb.name
-                logging.info(" - processing SDEF shape key: %s", shape_key_name)
 
-                kb.data.foreach_get("co", temp_coords)
-                coords_3d = temp_coords.reshape(-1, 3)
+            # 檢查原始 shape key 是否存在且頂點數量匹配
+            original_vertex_count = len(meshObj.data.vertices) if meshObj.data.shape_keys else 0
+            can_process_sdef = original_vertex_count > 0 and meshObj.data.shape_keys and len(meshObj.data.shape_keys.key_blocks) > 0
 
-                if shape_key_name == "mmd_sdef_c":
-                    sdef_counts = 0
-                    for v_idx in valid_vertices:
-                        if v_idx not in base_vertices or len(base_vertices[v_idx][0].groups) != 2:
-                            continue
-                        base = base_vertices[v_idx][0]
-                        base_co = base.co
-                        # 使用 numpy 進行座標變換
-                        c_coord_homo = np.append(coords_3d[v_idx], 1.0)
-                        c_co_transformed = (pmx_matrix_np @ c_coord_homo)[:3]
-                        c_co = Vector(c_co_transformed)
-                        if np.dot(c_co - base_co, c_co - base_co) < 0.000001:
-                            continue
-                        base.sdef_data[:] = tuple(c_co), base_co, base_co
-                        sdef_counts += 1
-                    logging.info("   - Restored %d SDEF vertices", sdef_counts)
-                elif sdef_counts > 0:
-                    ri = 1 if shape_key_name == "mmd_sdef_r0" else 2
-                    for v_idx in valid_vertices:
-                        if v_idx not in base_vertices:
-                            continue
-                        sdef_data = base_vertices[v_idx][0].sdef_data
-                        if sdef_data:
-                            c_coord_homo = np.append(coords_3d[v_idx], 1.0)
-                            transformed = (pmx_matrix_np @ c_coord_homo)[:3]
-                            sdef_data[ri] = tuple(transformed)
-                    logging.info("   - Updated SDEF data")
+            if can_process_sdef:
+                temp_coords_original = np.zeros(original_vertex_count * 3, dtype=np.float32)
+
+                for i, kb in sdef_keys:
+                    shape_key_name = kb.name
+                    logging.info(" - processing SDEF shape key: %s", shape_key_name)
+
+                    try:
+                        kb.data.foreach_get("co", temp_coords_original)
+                        coords_3d = temp_coords_original.reshape(-1, 3)
+
+                        if shape_key_name == "mmd_sdef_c":
+                            sdef_counts = 0
+                            for v_idx in valid_vertices:
+                                # 確保原始頂點索引也在範圍內
+                                if v_idx >= original_vertex_count or v_idx not in base_vertices or len(base_vertices[v_idx][0].groups) != 2:
+                                    continue
+                                base = base_vertices[v_idx][0]
+                                base_co = base.co
+                                # 使用 numpy 進行座標變換
+                                c_coord_homo = np.append(coords_3d[v_idx], 1.0)
+                                c_co_transformed = (pmx_matrix_np @ c_coord_homo)[:3]
+                                c_co = Vector(c_co_transformed)
+                                if np.dot(c_co - base_co, c_co - base_co) < 0.000001:
+                                    continue
+                                base.sdef_data[:] = tuple(c_co), base_co, base_co
+                                sdef_counts += 1
+                            logging.info("   - Restored %d SDEF vertices", sdef_counts)
+                        elif sdef_counts > 0:
+                            ri = 1 if shape_key_name == "mmd_sdef_r0" else 2
+                            for v_idx in valid_vertices:
+                                if v_idx >= original_vertex_count or v_idx not in base_vertices:
+                                    continue
+                                sdef_data = base_vertices[v_idx][0].sdef_data
+                                if sdef_data:
+                                    c_coord_homo = np.append(coords_3d[v_idx], 1.0)
+                                    transformed = (pmx_matrix_np @ c_coord_homo)[:3]
+                                    sdef_data[ri] = tuple(transformed)
+                            logging.info("   - Updated SDEF data")
+                    except Exception as e:
+                        logging.warning(f"處理 SDEF shape key '{shape_key_name}' 時出錯: {e}")
+                        continue
+            else:
+                logging.info("跳過 SDEF 處理：原始網格無 shape keys 或頂點數量不匹配")
 
             sdef_processing_time = time.time() - sdef_processing_start
             print(f"  SDEF 處理時間: {sdef_processing_time:.4f} 秒")
 
-            # 處理一般 shape keys - 完全批量化
+            # 處理一般 shape keys - 跳過不匹配的
             normal_processing_start = time.time()
-
             print(f"  開始批量處理 {len(normal_keys)} 個一般 shape keys...")
 
-            for batch_idx, (i, kb) in enumerate(normal_keys):
-                single_key_start = time.time()
-                shape_key_name = kb.name
+            if can_process_sdef and valid_vertex_count > 0:
+                for batch_idx, (i, kb) in enumerate(normal_keys):
+                    single_key_start = time.time()
+                    shape_key_name = kb.name
 
-                # 數據讀取
-                data_read_start = time.time()
-                kb.data.foreach_get("co", temp_coords)
-                coords_3d = temp_coords.reshape(-1, 3)
-                data_read_time = time.time() - data_read_start
+                    try:
+                        # 檢查 shape key 數據長度
+                        if len(kb.data) != original_vertex_count:
+                            logging.warning(f"Shape key '{shape_key_name}' 頂點數量不匹配，跳過")
+                            continue
 
-                # 批量座標變換 - 只處理有效頂點
-                transform_start = time.time()
-                shape_valid = coords_3d[valid_vertices]
-                shape_homo = np.column_stack([shape_valid, np.ones(valid_vertex_count)])
-                shape_transformed = (pmx_matrix_np @ shape_homo.T).T[:, :3]
-                transform_time = time.time() - transform_start
+                        # 數據讀取
+                        data_read_start = time.time()
+                        kb.data.foreach_get("co", temp_coords_original)
+                        coords_3d = temp_coords_original.reshape(-1, 3)
+                        data_read_time = time.time() - data_read_start
 
-                # 批量偏移計算
-                offset_start = time.time()
-                offsets = shape_transformed - basis_transformed
-                offset_magnitudes_squared = np.sum(offsets * offsets, axis=1)
+                        # 批量座標變換 - 只處理有效且在範圍內的頂點
+                        transform_start = time.time()
+                        valid_indices_in_range = valid_vertices[valid_vertices < original_vertex_count]
 
-                # 找出有效的偏移 (magnitude > threshold)
-                valid_offset_mask = offset_magnitudes_squared >= 0.000001
-                valid_offset_indices = np.where(valid_offset_mask)[0]
+                        if len(valid_indices_in_range) > 0:
+                            shape_valid = coords_3d[valid_indices_in_range]
+                            shape_homo = np.column_stack([shape_valid, np.ones(len(valid_indices_in_range))])
+                            shape_transformed = (pmx_matrix_np @ shape_homo.T).T[:, :3]
 
-                shape_key_names.append(shape_key_name)
-                offset_count = 0
+                            # 對應的 basis 座標
+                            basis_valid_in_range = basis_coords_3d[valid_indices_in_range]
+                            transform_time = time.time() - transform_start
 
-                # 只對有效偏移進行處理
-                for local_idx in valid_offset_indices:
-                    v_idx = valid_vertices[local_idx]
-                    if v_idx in base_vertices:
-                        base = base_vertices[v_idx][0]
-                        offset_vector = Vector(offsets[local_idx])
-                        base.offsets[shape_key_name] = offset_vector
-                        offset_count += 1
+                            # 批量偏移計算
+                            offset_start = time.time()
+                            offsets = shape_transformed - basis_valid_in_range
+                            offset_magnitudes_squared = np.sum(offsets * offsets, axis=1)
 
-                offset_time = time.time() - offset_start
-                single_key_time = time.time() - single_key_start
+                            # 找出有效的偏移 (magnitude > threshold)
+                            valid_offset_mask = offset_magnitudes_squared >= 0.000001
+                            valid_offset_indices = np.where(valid_offset_mask)[0]
 
-                if batch_idx % 10 == 0 or batch_idx == len(normal_keys) - 1:
-                    print(f"    批次 {batch_idx + 1}/{len(normal_keys)}: {shape_key_name}")
-                    print(f"      總時間: {single_key_time:.4f}s (讀取: {data_read_time:.4f}s, 變換: {transform_time:.4f}s, 偏移: {offset_time:.4f}s)")
-                    print(f"      有效偏移: {offset_count}/{valid_vertex_count}")
+                            shape_key_names.append(shape_key_name)
+                            offset_count = 0
+
+                            # 只對有效偏移進行處理
+                            for local_idx in valid_offset_indices:
+                                v_idx = valid_indices_in_range[local_idx]
+                                if v_idx in base_vertices:
+                                    base = base_vertices[v_idx][0]
+                                    offset_vector = Vector(offsets[local_idx])
+                                    base.offsets[shape_key_name] = offset_vector
+                                    offset_count += 1
+                        else:
+                            transform_time = offset_time = 0
+                            offset_count = 0
+                            shape_key_names.append(shape_key_name)
+
+                        offset_time = time.time() - offset_start
+                        single_key_time = time.time() - single_key_start
+
+                        if batch_idx % 10 == 0 or batch_idx == len(normal_keys) - 1:
+                            print(f"    批次 {batch_idx + 1}/{len(normal_keys)}: {shape_key_name}")
+                            print(f"      總時間: {single_key_time:.4f}s (讀取: {data_read_time:.4f}s, 變換: {transform_time:.4f}s, 偏移: {offset_time:.4f}s)")
+                            print(f"      有效偏移: {offset_count}/{len(valid_indices_in_range) if len(valid_indices_in_range) > 0 else valid_vertex_count}")
+
+                    except Exception as e:
+                        logging.warning(f"處理 shape key '{shape_key_name}' 時出錯: {e}")
+                        continue
+            else:
+                logging.info("跳過一般 shape key 處理：條件不滿足")
 
             normal_processing_time = time.time() - normal_processing_start
             print(f"  一般 shape key 批量處理時間: {normal_processing_time:.4f} 秒")
