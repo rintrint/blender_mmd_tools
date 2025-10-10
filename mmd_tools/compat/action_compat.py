@@ -312,29 +312,24 @@ def new_fcurve(action_obj: bpy.types.Action, data_path: str, index: int = 0, gro
 
 
 def assign_action_to_datablock(datablock, action):
-    """Assign Action to datablock and ensure slot is properly set
-
-    Args:
-        datablock: Datablock to assign Action to (e.g. Object, Material, etc.)
-        action: Action to assign
-
-    Raises:
-        RuntimeError: If action slot cannot be assigned in Blender 5.0+
-    """
-    # Ensure animation_data exists
+    """Assign Action to datablock and ensure slot is properly set in Blender 5.0+"""
     if not datablock.animation_data:
         datablock.animation_data_create()
 
-    # Assign action
     datablock.animation_data.action = action
 
-    # In Blender 5.0+, need to explicitly specify action_slot
     if IS_BLENDER_50_UP and action is not None:
-        # Ensure action has slots
+        # Auto-create slot if missing
         if not hasattr(action, "slots") or len(action.slots) == 0:
-            raise RuntimeError(f"Cannot assign action slot: Action '{action.name}' has no slots")
+            id_type = "OBJECT"
+            if isinstance(datablock, bpy.types.Key):
+                id_type = "KEY"
+            elif hasattr(datablock, "node_tree"):
+                id_type = "NODETREE"
 
-        # Use the first slot (index 0)
+            slot_name = action.name if action.name else "Slot"
+            action.slots.new(name=slot_name, id_type=id_type)
+
         datablock.animation_data.action_slot = action.slots[0]
 
 
