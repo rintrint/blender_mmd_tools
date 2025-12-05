@@ -1,0 +1,72 @@
+name: Bug Report (多語言/Multilingual)
+description: Report errors in English, Japanese, Simplified or Traditional Chinese.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### Welcome / ようこそ / 欢迎 / 歡迎
+        You can fill out this form in **English, Japanese, Simplified Chinese, or Traditional Chinese**.
+        日本語、簡体中文、繁體中文での記入も可能です。
+        您可以自由使用 英文/日文/簡體中文/繁體中文 填寫此表單。
+
+  - type: input
+    id: blender_version
+    attributes:
+      label: Blender Version / Blenderのバージョン / Blender 版本
+      description: e.g. 4.2.0, 3.6 LTS
+      placeholder: 4.2.0
+    validations:
+      required: true
+
+  - type: input
+    id: mmd_tools_version
+    attributes:
+      label: mmd_tools Version / mmd_toolsのバージョン / mmd_tools 版本
+      description: e.g. v2.10.0 or commit hash
+      placeholder: v2.10.0
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / OS環境 / 操作系统 / 作業系統
+      description: e.g. Windows 11, macOS, Linux
+      placeholder: Windows 11
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description / 内容 / 描述
+      description: What is the problem? / 何が起きましたか？ / 发生了什么问题？ / 發生了什麼問題？
+      placeholder: |
+        [EN] Textures are missing when importing PMX...
+        [JP] PMXをインポートするとテクスチャが欠落します...
+        [CN] 导入 PMX 时纹理丢失...
+        [TW] 匯入 PMX 時貼圖遺失...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce / 再現手順 / 复现步骤 / 重現步驟
+      description: How can we reproduce the issue? / 再現手順を教えてください。
+      placeholder: |
+        1. Open Blender (Blenderを開く)
+        2. Import Model (モデルを読み込む)
+        3. Click '...' (「...」をクリック)
+        4. Error occurs (エラー発生)
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Log & Screenshots / エラーログとスクショ / 错误日志与截图
+      description: Paste text from Blender System Console or drag & drop images. / コンソールログや画像を貼ってください。
+      render: shell
