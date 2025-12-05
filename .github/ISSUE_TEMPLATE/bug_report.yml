@@ -1,0 +1,23 @@
+name: Bug report
+description: Report a bug with MMD Tools
+title: "[BUG] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Report Guidelines
+
+        You can report issues in **English**, **日本語**, or **中文**.
+        Please provide as much relevant information as possible, such as:
+        - The version of MMD Tools you are using
+        - The version of Blender you are using
+        - The PMX model you are using
+        - The VMD motion you are using
+        - Any other information that might be relevant to the bug
+
+  - type: textarea
+    id: issue-description
+    attributes:
+      label: Issue Description
+      description: Describe your issue here
