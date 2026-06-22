@@ -73,9 +73,8 @@ The following features are intentionally excluded from MMD Tools:
 **Details**:
 
 - Blender's rigid body system is prone to crashes and has worse performance compared to MMD
-- Blender lacks collision mask functionality, requiring MMD Tools to use numerous rigid body constraints to simulate collision masks
-- This constraint-heavy approach further degrades performance
-- While MMD Tools provides `Assembly -> Physics` functionality, breast physics simulation doesn't closely match MMD behavior
+- Blender lacks collision mask functionality, requiring MMD Tools to use numerous rigid body constraints to simulate collision masks. This constraint-heavy approach further degrades performance
+- MMD uses an older version of Bullet (2.75) with "soft" constraints, whereas Blender uses a newer version of Bullet with "hard" constraints. As a result, MMD Tools cannot reproduce PMX physics exactly as they behave in MMD. While MMD Tools provides `Assembly -> Physics` functionality, breast physics simulation doesn't closely match MMD behavior
 
 **Recommended Workaround**:
 For physics simulation, we recommend using [MMDBridge](https://github.com/rintrint/mmdbridge) and disabling Blender's Rigid Body World to avoid unnecessary rigid body simulations.
