@@ -1,6 +1,7 @@
 # Copyright 2021 MMD Tools authors
 # This file is part of MMD Tools.
 
+import ast
 import itertools
 import re
 from abc import ABC, abstractmethod
@@ -605,6 +606,167 @@ MMD_DATA_HANDLERS: Set[MMDDataHandlerABC] = {
 MMD_DATA_TYPE_TO_HANDLERS: Dict[str, MMDDataHandlerABC] = {h.type_name: h for h in MMD_DATA_HANDLERS}
 
 
+# String methods allowed inside batch operation scripts. The batch script is a user-editable
+# expression, so it is interpreted by walking a restricted AST instead of using the built-in
+# evaluator, which is not permitted in Blender extensions.
+_ALLOWED_STR_METHODS = frozenset(
+    {
+        "replace",
+        "upper",
+        "lower",
+        "strip",
+        "lstrip",
+        "rstrip",
+        "title",
+        "capitalize",
+        "swapcase",
+        "casefold",
+        "startswith",
+        "endswith",
+        "find",
+        "rfind",
+        "count",
+        "index",
+        "rindex",
+        "zfill",
+        "ljust",
+        "rjust",
+        "center",
+        "format",
+        "split",
+        "rsplit",
+        "splitlines",
+        "join",
+        "removeprefix",
+        "removesuffix",
+        "isdigit",
+        "isalpha",
+        "isalnum",
+        "isspace",
+    }
+)
+
+
+def _eval_batch_slice(node: ast.AST, functions: Dict[str, Callable], names: Dict[str, object]):
+    if isinstance(node, ast.Slice):
+        lower = _eval_batch_node(node.lower, functions, names) if node.lower is not None else None
+        upper = _eval_batch_node(node.upper, functions, names) if node.upper is not None else None
+        step = _eval_batch_node(node.step, functions, names) if node.step is not None else None
+        return slice(lower, upper, step)
+    return _eval_batch_node(node, functions, names)
+
+
+def _eval_batch_node(node: ast.AST, functions: Dict[str, Callable], names: Dict[str, object]):
+    """Safely evaluate a restricted expression AST used by the translation batch script."""
+    if isinstance(node, ast.Expression):
+        return _eval_batch_node(node.body, functions, names)
+
+    if isinstance(node, ast.Constant):
+        return node.value
+
+    if isinstance(node, ast.Name):
+        if node.id in names:
+            return names[node.id]
+        raise ValueError(f"Unknown name in batch script: {node.id}")
+
+    if isinstance(node, ast.IfExp):
+        if _eval_batch_node(node.test, functions, names):
+            return _eval_batch_node(node.body, functions, names)
+        return _eval_batch_node(node.orelse, functions, names)
+
+    if isinstance(node, ast.BoolOp):
+        result = None
+        for value_node in node.values:
+            result = _eval_batch_node(value_node, functions, names)
+            if isinstance(node.op, ast.And) and not result:
+                return result
+            if isinstance(node.op, ast.Or) and result:
+                return result
+        return result
+
+    if isinstance(node, ast.UnaryOp):
+        operand = _eval_batch_node(node.operand, functions, names)
+        if isinstance(node.op, ast.Not):
+            return not operand
+        if isinstance(node.op, ast.USub):
+            return -operand
+        if isinstance(node.op, ast.UAdd):
+            return +operand
+        raise ValueError("Unsupported unary operator in batch script")
+
+    if isinstance(node, ast.BinOp):
+        left = _eval_batch_node(node.left, functions, names)
+        right = _eval_batch_node(node.right, functions, names)
+        if isinstance(node.op, ast.Add):
+            return left + right
+        if isinstance(node.op, ast.Sub):
+            return left - right
+        if isinstance(node.op, ast.Mult):
+            return left * right
+        if isinstance(node.op, ast.Mod):
+            return left % right
+        if isinstance(node.op, ast.FloorDiv):
+            return left // right
+        if isinstance(node.op, ast.Div):
+            return left / right
+        raise ValueError("Unsupported binary operator in batch script")
+
+    if isinstance(node, ast.Compare):
+        left = _eval_batch_node(node.left, functions, names)
+        for op, comparator_node in zip(node.ops, node.comparators):
+            right = _eval_batch_node(comparator_node, functions, names)
+            if isinstance(op, ast.Eq):
+                matched = left == right
+            elif isinstance(op, ast.NotEq):
+                matched = left != right
+            elif isinstance(op, ast.Lt):
+                matched = left < right
+            elif isinstance(op, ast.LtE):
+                matched = left <= right
+            elif isinstance(op, ast.Gt):
+                matched = left > right
+            elif isinstance(op, ast.GtE):
+                matched = left >= right
+            elif isinstance(op, ast.In):
+                matched = left in right
+            elif isinstance(op, ast.NotIn):
+                matched = left not in right
+            else:
+                raise ValueError("Unsupported comparison in batch script")
+            if not matched:
+                return False
+            left = right
+        return True
+
+    if isinstance(node, ast.Call):
+        if node.keywords:
+            raise ValueError("Keyword arguments are not supported in batch script")
+        args = [_eval_batch_node(arg, functions, names) for arg in node.args]
+        func = node.func
+        if isinstance(func, ast.Name):
+            if func.id not in functions:
+                raise ValueError(f"Unknown function in batch script: {func.id}")
+            return functions[func.id](*args)
+        if isinstance(func, ast.Attribute):
+            obj = _eval_batch_node(func.value, functions, names)
+            if isinstance(obj, str) and func.attr in _ALLOWED_STR_METHODS:
+                return getattr(obj, func.attr)(*args)
+            raise ValueError(f"Unsupported method in batch script: {func.attr}")
+        raise ValueError("Unsupported call target in batch script")
+
+    if isinstance(node, ast.Subscript):
+        value = _eval_batch_node(node.value, functions, names)
+        return value[_eval_batch_slice(node.slice, functions, names)]
+
+    if isinstance(node, ast.List):
+        return [_eval_batch_node(element, functions, names) for element in node.elts]
+
+    if isinstance(node, ast.Tuple):
+        return tuple(_eval_batch_node(element, functions, names) for element in node.elts)
+
+    raise ValueError(f"Unsupported expression in batch script: {type(node).__name__}")
+
+
 class FnTranslations:
     @staticmethod
     def apply_translations(root_object: bpy.types.Object):
@@ -635,8 +797,14 @@ class FnTranslations:
                 return translator.translate(name, name)
             return name
 
-        batch_operation_script_ast = compile(mmd_translation.batch_operation_script, "<string>", "eval")
+        batch_operation_script_ast = ast.parse(mmd_translation.batch_operation_script, mode="eval")
         batch_operation_target: str = mmd_translation.batch_operation_target
+
+        batch_functions: Dict[str, Callable] = {
+            "to_english": translate,
+            "to_mmd_lr": convertLRToName,
+            "to_blender_lr": convertNameToLR,
+        }
 
         mmd_translation_element_index: MMDTranslationElementIndex
         for mmd_translation_element_index in mmd_translation.filtered_translation_element_indices:
@@ -649,15 +817,11 @@ class FnTranslations:
             name_e = mmd_translation_element.name_e
             org_name, org_name_j, org_name_e = handler.get_names(mmd_translation_element)
 
-            # pylint: disable=eval-used
             result_name = str(
-                eval(
+                _eval_batch_node(
                     batch_operation_script_ast,
-                    {"__builtins__": {}},
+                    batch_functions,
                     {
-                        "to_english": translate,
-                        "to_mmd_lr": convertLRToName,
-                        "to_blender_lr": convertNameToLR,
                         "name": name,
                         "name_j": name_j if name_j != "" else name,
                         "name_e": name_e if name_e != "" else name,

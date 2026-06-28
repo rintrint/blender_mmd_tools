@@ -1,6 +1,7 @@
 # Copyright 2016 MMD Tools authors
 # This file is part of MMD Tools.
 
+import ast
 import logging
 import math
 import re
@@ -327,7 +328,15 @@ class VMDExporter:
                     return key_blocks[int(key)]
                 except IndexError:
                     return None
-            return key_blocks.get(eval(key), None)
+            # The fcurve data_path stores the shape key name as a quoted string literal.
+            # Parse it as a literal instead of evaluating it.
+            try:
+                parsed = ast.parse(key, mode="eval").body
+            except SyntaxError:
+                return None
+            if isinstance(parsed, ast.Constant) and isinstance(parsed.value, str):
+                return key_blocks.get(parsed.value, None)
+            return None
 
         rePath = re.compile(r"^key_blocks\[(.+)\]\.value$")
         for fcurve in animation_data.action.fcurves:

@@ -1,6 +1,7 @@
 # Copyright 2014 MMD Tools authors
 # This file is part of MMD Tools.
 
+import ast
 import logging
 import os
 import re
@@ -99,6 +100,24 @@ def get_preset_directories(operator_bl_idname):
     return preset_dirs
 
 
+def _parse_preset_literal(node):
+    """Parse a literal value node from an operator preset file's AST."""
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Tuple):
+        return tuple(_parse_preset_literal(element) for element in node.elts)
+    if isinstance(node, ast.List):
+        return [_parse_preset_literal(element) for element in node.elts]
+    if isinstance(node, ast.Set):
+        return {_parse_preset_literal(element) for element in node.elts}
+    if isinstance(node, ast.Dict):
+        return {_parse_preset_literal(key): _parse_preset_literal(value) for key, value in zip(node.keys, node.values)}
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        operand = _parse_preset_literal(node.operand)
+        return +operand if isinstance(node.op, ast.UAdd) else -operand
+    raise ValueError(f"Unsupported preset value: {type(node).__name__}")
+
+
 def apply_operator_preset(operator, preset_name):
     """Apply a saved preset to an operator instance"""
     if not preset_name:
@@ -121,18 +140,28 @@ def apply_operator_preset(operator, preset_name):
         if not preset_file:
             return False
 
-        # Execute preset with proper context
-        with bpy.context.temp_override(active_operator=operator):
-            try:
-                with open(preset_file, encoding="utf-8") as f:
-                    preset_code = f.read()
+        # Apply the preset by parsing its assignments instead of executing it.
+        # Blender operator preset files only contain literal assignments of the
+        # form `op.<property> = <literal>`, so they can be applied safely without
+        # exec by reading those assignments from the AST.
+        try:
+            with open(preset_file, encoding="utf-8") as f:
+                preset_code = f.read()
 
-                namespace = {"bpy": bpy}
-                exec(preset_code, namespace)
-                return True
+            tree = ast.parse(preset_code, filename=preset_file, mode="exec")
+            for node in tree.body:
+                if not isinstance(node, ast.Assign):
+                    continue
+                targets = [t for t in node.targets if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)]
+                if not targets:
+                    continue
+                value = _parse_preset_literal(node.value)
+                for target in targets:
+                    setattr(operator, target.attr, value)
+            return True
 
-            except Exception:
-                return False
+        except Exception:
+            return False
 
     except Exception:
         return False
