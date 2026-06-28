@@ -12,7 +12,6 @@ website = "https://mmd-blender.fandom.com/wiki/MMD_Tools"
 # Optional list defined by Blender and server, see:
 # https://docs.blender.org/manual/en/dev/advanced/extensions/tags.html
 tags = [
-  "3D View",
   "Camera",
   "Import-Export",
   "Material",
