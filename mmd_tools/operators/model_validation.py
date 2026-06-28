@@ -9,13 +9,19 @@ import shutil
 import bpy
 from bpy.types import Operator
 
+from opencc import OpenCC
+
 from ..core.material import FnMaterial
 from ..core.model import FnModel
-from ..externals.opencc import OpenCC
 from ..preferences import get_additional_unallowed_chars, get_replacement_char
 
 cc_s2t = OpenCC("s2t")
-cc_t2jp = OpenCC("t2jp")
+
+# The opencc-python-reimplemented wheel ships the JPVariants dictionary but not the t2jp
+# configuration, so load the bundled configuration by absolute path. OpenCC appends ".json"
+# to the given name, so the path is passed without the extension.
+_T2JP_CONFIG_PATH = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data", "opencc", "t2jp"))
+cc_t2jp = OpenCC(_T2JP_CONFIG_PATH)
 
 
 def _find_additional_unallowed_chars(name: str, unallowed: str) -> list[str]:

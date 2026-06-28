@@ -22,6 +22,12 @@ tags = [
 
 blender_version_min = "4.2.0"
 
+# Bundled Python dependencies, packaged as wheels:
+# https://docs.blender.org/manual/en/latest/advanced/extensions/python_wheels.html
+wheels = [
+  "./wheels/opencc_python_reimplemented-0.1.7-py2.py3-none-any.whl",
+]
+
 license = ["SPDX:GPL-3.0-or-later"]
 copyright = ["2025 MMD & Blender Team", "2021-2024 UuuNyaa", "2014-2022 powroupi", "2012-2015 sugiany"]
 

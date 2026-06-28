@@ -22,6 +22,9 @@ var/
 wheels/
 pip-wheel-metadata/
 share/python-wheels/
+# Bundled extension dependency wheels are tracked, despite the wheels/ rule above
+!mmd_tools/wheels/
+!mmd_tools/wheels/*.whl
 *.egg-info/
 .installed.cfg
 *.egg
