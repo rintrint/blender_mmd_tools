@@ -14,6 +14,7 @@ from bpy.types import Operator, OperatorFileListElement
 from bpy_extras.io_utils import ExportHelper, ImportHelper, poll_file_object_drop
 
 from .. import auto_scene_setup
+from ..core import pmd, pmx
 from ..core.camera import MMDCamera
 from ..core.light import MMDLight
 from ..core.model import FnModel, Model
@@ -382,6 +383,9 @@ class ImportPmx(Operator, ImportHelper, PreferencesMixin):
                     self._do_execute(context)
             elif self.filepath:
                 self._do_execute(context)
+        except (pmx.InvalidFileError, pmx.UnsupportedVersionError, pmd.InvalidFileError, pmd.UnsupportedVersionError) as e:
+            logging.exception("Error occurred during PMX import")
+            self.report({"ERROR"}, f'Failed to import model from "{self.filepath}": {e}')
         except Exception:
             logging.exception("Error occurred during PMX import")
             err_msg = traceback.format_exc()

@@ -49,10 +49,16 @@ class FileReadStream(FileStream):
         self.__fin = open(path, "rb")
         FileStream.__init__(self, path, self.__fin, pmx_header)
 
+    def __read(self, size):
+        data = self.__fin.read(size)
+        if len(data) != size:
+            raise InvalidFileError(f"Unexpected end of file (needed {size} bytes, got {len(data)})")
+        return data
+
     def __readIndex(self, size, typedict):
         index = None
         if size in typedict:
-            (index,) = struct.unpack(typedict[size], self.__fin.read(size))
+            (index,) = struct.unpack(typedict[size], self.__read(size))
         else:
             raise ValueError(f"invalid data size {str(size)}")
         return index
@@ -84,38 +90,45 @@ class FileReadStream(FileStream):
 
     # READ / WRITE methods for general types
     def readInt(self):
-        (v,) = struct.unpack("<i", self.__fin.read(4))
+        (v,) = struct.unpack("<i", self.__read(4))
         return v
 
+    def readCount(self):
+        count = self.readInt()
+        if count < 0:
+            raise InvalidFileError(f"Invalid count value: {count}")
+        return count
+
     def readShort(self):
-        (v,) = struct.unpack("<h", self.__fin.read(2))
+        (v,) = struct.unpack("<h", self.__read(2))
         return v
 
     def readUnsignedShort(self):
-        (v,) = struct.unpack("<H", self.__fin.read(2))
+        (v,) = struct.unpack("<H", self.__read(2))
         return v
 
     def readStr(self):
         length = self.readInt()
-        (buf,) = struct.unpack(f"<{length}s", self.__fin.read(length))
-        return str(buf, self.header().encoding.charset, errors="replace")
+        if length < 0:
+            raise InvalidFileError(f"Invalid string length: {length}")
+        return str(self.__read(length), self.header().encoding.charset, errors="replace")
 
     def readFloat(self):
-        (v,) = struct.unpack("<f", self.__fin.read(4))
+        (v,) = struct.unpack("<f", self.__read(4))
         return v
 
     def readVector(self, size):
-        return struct.unpack("<" + "f" * size, self.__fin.read(4 * size))
+        return struct.unpack("<" + "f" * size, self.__read(4 * size))
 
     def readByte(self):
-        (v,) = struct.unpack("<B", self.__fin.read(1))
+        (v,) = struct.unpack("<B", self.__read(1))
         return v
 
     def readBytes(self, length):
-        return self.__fin.read(length)
+        return self.__read(length)
 
     def readSignedByte(self):
-        (v,) = struct.unpack("<b", self.__fin.read(1))
+        (v,) = struct.unpack("<b", self.__read(1))
         return v
 
 
@@ -365,7 +378,7 @@ class Model:
         logging.info("------------------------------")
         logging.info("Load Vertices")
         logging.info("------------------------------")
-        num_vertices = fs.readInt()
+        num_vertices = fs.readCount()
         self.vertices = []
         for i in range(num_vertices):
             v = Vertex()
@@ -377,7 +390,7 @@ class Model:
         logging.info("------------------------------")
         logging.info(" Load Faces")
         logging.info("------------------------------")
-        num_faces = fs.readInt()
+        num_faces = fs.readCount()
         self.faces = []
         for i in range(int(num_faces / 3)):
             f1 = fs.readVertexIndex()
@@ -390,7 +403,7 @@ class Model:
         logging.info("------------------------------")
         logging.info(" Load Textures")
         logging.info("------------------------------")
-        num_textures = fs.readInt()
+        num_textures = fs.readCount()
         self.textures = []
         for i in range(num_textures):
             t = Texture()
@@ -403,7 +416,7 @@ class Model:
         logging.info("------------------------------")
         logging.info(" Load Materials")
         logging.info("------------------------------")
-        num_materials = fs.readInt()
+        num_materials = fs.readCount()
         self.materials = []
         for i in range(num_materials):
             m = Material()
@@ -442,7 +455,7 @@ class Model:
         logging.info("------------------------------")
         logging.info(" Load Bones")
         logging.info("------------------------------")
-        num_bones = fs.readInt()
+        num_bones = fs.readCount()
         self.bones = []
         for i in range(num_bones):
             b = Bone()
@@ -476,7 +489,7 @@ class Model:
         logging.info("------------------------------")
         logging.info(" Load Morphs")
         logging.info("------------------------------")
-        num_morph = fs.readInt()
+        num_morph = fs.readCount()
         self.morphs = []
         display_categories = {0: "System", 1: "Eyebrow", 2: "Eye", 3: "Mouth", 4: "Other"}
         for i in range(num_morph):
@@ -493,7 +506,7 @@ class Model:
         logging.info("------------------------------")
         logging.info(" Load Display Items")
         logging.info("------------------------------")
-        num_disp = fs.readInt()
+        num_disp = fs.readCount()
         self.display = []
         for i in range(num_disp):
             d = Display()
@@ -509,7 +522,7 @@ class Model:
         logging.info("------------------------------")
         logging.info(" Load Rigid Bodies")
         logging.info("------------------------------")
-        num_rigid = fs.readInt()
+        num_rigid = fs.readCount()
         self.rigids = []
         rigid_types = {0: "Sphere", 1: "Box", 2: "Capsule"}
         rigid_modes = {0: "Static", 1: "Dynamic", 2: "Dynamic(track to bone)"}
@@ -538,7 +551,7 @@ class Model:
         logging.info("------------------------------")
         logging.info(" Load Joints")
         logging.info("------------------------------")
-        num_joints = fs.readInt()
+        num_joints = fs.readCount()
         self.joints = []
         for i in range(num_joints):
             j = Joint()
@@ -876,7 +889,7 @@ class Material:
             self.toon_texture = __tex_index(fs.readTextureIndex())
 
         self.comment = fs.readStr()
-        self.vertex_count = fs.readInt()
+        self.vertex_count = fs.readCount()
 
     def save(self, fs):
         fs.writeStr(self.name)
@@ -1020,7 +1033,7 @@ class Bone:
             self.loopCount = fs.readInt()
             self.rotationConstraint = fs.readFloat()
 
-            iklink_num = fs.readInt()
+            iklink_num = fs.readCount()
             self.ik_links = []
             for i in range(iklink_num):
                 link = IKLink()
@@ -1175,7 +1188,7 @@ class VertexMorph(Morph):
         return 1
 
     def load(self, fs):
-        num = fs.readInt()
+        num = fs.readCount()
         for i in range(num):
             t = VertexMorphOffset()
             t.load(fs)
@@ -1206,7 +1219,7 @@ class UVMorph(Morph):
 
     def load(self, fs):
         self.offsets = []
-        num = fs.readInt()
+        num = fs.readCount()
         for i in range(num):
             t = UVMorphOffset()
             t.load(fs)
@@ -1236,7 +1249,7 @@ class BoneMorph(Morph):
 
     def load(self, fs):
         self.offsets = []
-        num = fs.readInt()
+        num = fs.readCount()
         for i in range(num):
             t = BoneMorphOffset()
             t.load(fs)
@@ -1271,7 +1284,7 @@ class MaterialMorph(Morph):
 
     def load(self, fs):
         self.offsets = []
-        num = fs.readInt()
+        num = fs.readCount()
         for i in range(num):
             t = MaterialMorphOffset()
             t.load(fs)
@@ -1331,7 +1344,7 @@ class GroupMorph(Morph):
 
     def load(self, fs):
         self.offsets = []
-        num = fs.readInt()
+        num = fs.readCount()
         for i in range(num):
             t = GroupMorphOffset()
             t.load(fs)
@@ -1369,7 +1382,7 @@ class Display:
         self.name_e = fs.readStr()
 
         self.isSpecial = (fs.readByte() == 1)
-        num = fs.readInt()
+        num = fs.readCount()
         self.data = []
         for i in range(num):
             disp_type = fs.readByte()
