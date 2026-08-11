@@ -643,7 +643,7 @@ _ALLOWED_STR_METHODS = frozenset(
         "isalpha",
         "isalnum",
         "isspace",
-    }
+    },
 )
 
 
@@ -713,7 +713,7 @@ def _eval_batch_node(node: ast.AST, functions: Dict[str, Callable], names: Dict[
 
     if isinstance(node, ast.Compare):
         left = _eval_batch_node(node.left, functions, names)
-        for op, comparator_node in zip(node.ops, node.comparators):
+        for op, comparator_node in zip(node.ops, node.comparators, strict=False):
             right = _eval_batch_node(comparator_node, functions, names)
             if isinstance(op, ast.Eq):
                 matched = left == right

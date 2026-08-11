@@ -111,7 +111,7 @@ def _parse_preset_literal(node):
     if isinstance(node, ast.Set):
         return {_parse_preset_literal(element) for element in node.elts}
     if isinstance(node, ast.Dict):
-        return {_parse_preset_literal(key): _parse_preset_literal(value) for key, value in zip(node.keys, node.values)}
+        return {_parse_preset_literal(key): _parse_preset_literal(value) for key, value in zip(node.keys, node.values, strict=False)}
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
         operand = _parse_preset_literal(node.operand)
         return +operand if isinstance(node.op, ast.UAdd) else -operand

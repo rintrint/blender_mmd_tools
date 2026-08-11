@@ -8,7 +8,6 @@ import shutil
 
 import bpy
 from bpy.types import Operator
-
 from opencc import OpenCC
 
 from ..core.material import FnMaterial
