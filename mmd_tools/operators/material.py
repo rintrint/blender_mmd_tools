@@ -4,7 +4,7 @@
 from collections import defaultdict
 
 import bpy
-from bpy.props import BoolProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, StringProperty
 from bpy.types import Operator
 
 from .. import cycles_converter
@@ -391,6 +391,53 @@ class MoveMaterialDown(Operator):
             self.report({"ERROR"}, "Materials not found")
             return {"CANCELLED"}
         obj.active_material_index = next_index
+        return {"FINISHED"}
+
+
+class SortMaterials(Operator):
+    bl_idname = "mmd_tools.sort_materials"
+    bl_label = "Sort Materials"
+    bl_description = "Sort MMD materials in the list"
+    bl_options = {"REGISTER", "UNDO"}
+
+    sort_method: EnumProperty(
+        name="Sort By",
+        description="The value used for sorting",
+        items=[
+            ("NAME", "Blender Name", "Sort by Blender material name", 0),
+            ("NAME_J", "Japanese MMD Name", "Sort by MMD Japanese material name", 1),
+            ("NAME_E", "English MMD Name", "Sort by MMD English material name", 2),
+            ("ID", "Material ID", "Sort by MMD material ID", 3),
+        ],
+        default="NAME",
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == "MESH" and obj.mmd_type == "NONE"
+
+    def execute(self, context):
+        obj = context.active_object
+        mat_names = {}
+
+        try:
+            for i, m in enumerate(obj.data.materials):
+                if m is None:
+                    raise MaterialNotFoundError
+                if self.sort_method == "NAME":
+                    mat_names[i] = m.name
+                elif self.sort_method == "NAME_J":
+                    mat_names[i] = m.mmd_material.name_j
+                elif self.sort_method == "NAME_E":
+                    mat_names[i] = m.mmd_material.name_e
+                elif self.sort_method == "ID":
+                    mat_names[i] = m.mmd_material.material_id
+            mat_order = sorted(mat_names, key=mat_names.get)
+            FnMaterial.sort_materials(obj, mat_order)
+        except MaterialNotFoundError:
+            self.report({"ERROR"}, "Materials not found")
+            return {"CANCELLED"}
         return {"FINISHED"}
 
 

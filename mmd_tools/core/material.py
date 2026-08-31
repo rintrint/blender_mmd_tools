@@ -111,6 +111,50 @@ class FnMaterial:
         return mat1, mat2
 
     @staticmethod
+    def sort_materials(mesh_object: bpy.types.Object, mat_order: list[int]):
+        """
+        Sort the materials while keeping the model appearance.
+
+        If `mat_order=[2, 0, 1]` is given, the third material will be the new first.
+
+        Args:
+            mesh_object (bpy.types.Object): The mesh object
+            mat_order (list[int]): The index list for specifying new material order
+
+        Raises:
+            MaterialNotFoundError: If one of the materials is not found, or invalid order is given
+        """
+        current_idx = mesh_object.active_material_index
+        mesh = cast("bpy.types.Mesh", mesh_object.data)
+        try:
+            # no duplication + missing elements
+            if len(mat_order) != len(set(mat_order)) or set(mat_order) != set(range(len(mesh.materials))):
+                raise MaterialNotFoundError("Invalid material order was given")
+            for idx in mat_order:
+                mat = mesh.materials[idx]
+                if mat is None:
+                    raise MaterialNotFoundError
+        except (KeyError, IndexError) as exc:
+            # Wrap exceptions within our custom ones
+            raise MaterialNotFoundError from exc
+
+        index_map = {mat_order[i]: i for i in range(len(mat_order))}
+
+        # Swap polygons
+        for poly in mesh.polygons:
+            prev_idx = poly.material_index
+            curr_idx = index_map[prev_idx]
+            poly.material_index = curr_idx
+
+        # Swap slots
+        mat_refs = [slot.material for slot in mesh_object.material_slots]
+        for i, mat in enumerate(mat_refs):
+            curr_idx = index_map[i]
+            mesh_object.material_slots[curr_idx].material = mat
+
+        mesh_object.active_material_index = index_map[current_idx]
+
+    @staticmethod
     def fixMaterialOrder(meshObj: bpy.types.Object, material_names: Iterable[str]):
         """Fix the material order which is lost after joining meshes."""
         materials = cast("bpy.types.Mesh", meshObj.data).materials
