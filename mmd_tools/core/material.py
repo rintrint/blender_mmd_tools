@@ -138,6 +138,9 @@ class FnMaterial:
             # Wrap exceptions within our custom ones
             raise MaterialNotFoundError from exc
 
+        if not mat_order:
+            return
+
         index_map = {mat_order[i]: i for i in range(len(mat_order))}
 
         # Swap polygons

@@ -942,6 +942,29 @@ class TestMMDProperties(unittest.TestCase):
 
         print("✓ Root properties basic test passed")
 
+    def test_root_active_object_index_getters_do_not_write(self):
+        """Test active rigid body and joint getters without mutating ID properties"""
+        self._enable_mmd_tools()
+
+        model = self._create_test_model()
+        root = model.rootObject().mmd_root
+        rigid_obj = self._create_test_rigid_body(model)
+        joint_obj = self._create_test_joint(model)
+
+        root["active_rigidbody_object_index"] = 999
+        bpy.context.view_layer.objects.active = rigid_obj
+        expected_rigid_index = bpy.context.scene.objects.find(rigid_obj.name)
+        self.assertEqual(root.active_rigidbody_index, expected_rigid_index)
+        self.assertEqual(root["active_rigidbody_object_index"], 999)
+
+        root["active_joint_object_index"] = 999
+        bpy.context.view_layer.objects.active = joint_obj
+        expected_joint_index = bpy.context.scene.objects.find(joint_obj.name)
+        self.assertEqual(root.active_joint_index, expected_joint_index)
+        self.assertEqual(root["active_joint_object_index"], 999)
+
+        print("✓ Active object index getter test passed")
+
     def test_root_properties_comments(self):
         """Test root object comment properties"""
         self._enable_mmd_tools()

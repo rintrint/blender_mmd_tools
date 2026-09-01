@@ -181,7 +181,7 @@ def _getActiveRigidbodyObject(prop: "MMDRoot"):
     context = bpy.context
     active_obj = FnContext.get_active_object(context)
     if FnModel.is_rigid_body_object(active_obj):
-        prop["active_rigidbody_object_index"] = FnContext.get_scene_objects(context).find(active_obj.name)
+        return FnContext.get_scene_objects(context).find(active_obj.name)
     return prop.get("active_rigidbody_object_index", 0)
 
 
@@ -198,7 +198,7 @@ def _getActiveJointObject(prop: "MMDRoot"):
     context = bpy.context
     active_obj = FnContext.get_active_object(context)
     if FnModel.is_joint_object(active_obj):
-        prop["active_joint_object_index"] = FnContext.get_scene_objects(context).find(active_obj.name)
+        return FnContext.get_scene_objects(context).find(active_obj.name)
     return prop.get("active_joint_object_index", 0)
 
 

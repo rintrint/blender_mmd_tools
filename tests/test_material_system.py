@@ -494,6 +494,21 @@ class TestMaterialSystem(unittest.TestCase):
 
         print("✓ Material sorting test passed")
 
+    def test_fn_material_sort_materials_empty(self):
+        """Test sorting a mesh without materials"""
+        self._enable_mmd_tools()
+
+        bpy.ops.mesh.primitive_cube_add()
+        mesh_obj = bpy.context.active_object
+
+        self.assertEqual(len(mesh_obj.data.materials), 0, "Mesh should not have materials")
+
+        FnMaterial.sort_materials(mesh_obj, [])
+
+        self.assertEqual(len(mesh_obj.data.materials), 0, "Sorting should be a no-op")
+
+        print("✓ Empty material sorting test passed")
+
     def test_fn_material_sort_materials_errors(self):
         """Test material sorting error handling"""
         self._enable_mmd_tools()
