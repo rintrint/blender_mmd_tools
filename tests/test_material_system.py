@@ -461,6 +461,66 @@ class TestMaterialSystem(unittest.TestCase):
 
         print("✓ Material swapping error handling test passed")
 
+    def test_fn_material_sort_materials(self):
+        """Test material sorting functionality"""
+        self._enable_mmd_tools()
+
+        # Create test mesh with multiple materials
+        mesh_obj, _ = self.__create_test_mesh_with_material("Material1")
+        material2 = self.__create_test_material("Material2")
+        material3 = self.__create_test_material("Material3")
+
+        mesh_obj.data.materials.append(material2)
+        mesh_obj.data.materials.append(material3)
+
+        # Create some faces with different material indices
+        mesh = mesh_obj.data
+        mesh.polygons[0].material_index = 0
+        if len(mesh.polygons) > 1:
+            mesh.polygons[1].material_index = 1
+        if len(mesh.polygons) > 2:
+            mesh.polygons[2].material_index = 2
+
+        # Test sorting by index
+        original_mat0 = mesh.materials[0]
+        original_mat1 = mesh.materials[1]
+        original_mat2 = mesh.materials[2]
+
+        FnMaterial.sort_materials(mesh_obj, [2, 0, 1])
+
+        self.assertEqual(mesh.materials[0], original_mat2, "Materials should be swapped in slots")
+        self.assertEqual(mesh.materials[1], original_mat0, "Materials should be swapped in slots")
+        self.assertEqual(mesh.materials[2], original_mat1, "Materials should be swapped in slots")
+
+        print("✓ Material sorting test passed")
+
+    def test_fn_material_sort_materials_empty(self):
+        """Test sorting a mesh without materials"""
+        self._enable_mmd_tools()
+
+        bpy.ops.mesh.primitive_cube_add()
+        mesh_obj = bpy.context.active_object
+
+        self.assertEqual(len(mesh_obj.data.materials), 0, "Mesh should not have materials")
+
+        FnMaterial.sort_materials(mesh_obj, [])
+
+        self.assertEqual(len(mesh_obj.data.materials), 0, "Sorting should be a no-op")
+
+        print("✓ Empty material sorting test passed")
+
+    def test_fn_material_sort_materials_errors(self):
+        """Test material sorting error handling"""
+        self._enable_mmd_tools()
+
+        mesh_obj, _ = self.__create_test_mesh_with_material()
+
+        # Test with invalid material references
+        with self.assertRaises(MaterialNotFoundError):
+            FnMaterial.sort_materials(mesh_obj, [0, 999])  # Non-existent index
+
+        print("✓ Material sorting error handling test passed")
+
     def test_fn_material_fix_material_order(self):
         """Test material order fixing functionality"""
         self._enable_mmd_tools()

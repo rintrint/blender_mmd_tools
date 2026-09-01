@@ -81,7 +81,7 @@ def _get_size(prop):
 
 
 def _set_size(prop, value):
-    obj = prop.id_data
+    obj: bpy.types.Object = prop.id_data
     assert obj.mode == "OBJECT"  # not support other mode yet
     shape = prop.shape
 
@@ -128,21 +128,26 @@ def _set_size(prop, value):
                 z0 = -z if z0 < 0 else z
                 v.co = [x0, y0, z0]
         elif shape == "CAPSULE":
-            r0, h0, xx = FnRigidBody.get_rigid_body_size(prop.id_data)
-            h0 *= 0.5
+            r0 = max(v.co.xy.length for v in mesh.vertices)
             radius = max(value[0], 1e-3)
-            height = max(value[1], 1e-3) * 0.5
-            scale = radius / max(r0, 1e-3)
-            for v in mesh.vertices:
-                x0, y0, z0 = v.co
-                x0 *= scale
-                y0 *= scale
-                if z0 < 0:
-                    z0 = (z0 + h0) * scale - height
-                else:
-                    z0 = (z0 - h0) * scale + height
-                v.co = [x0, y0, z0]
+            height = max(value[1], 1e-3)
+            if r0 < 1e-6:
+                bpyutils.makeCapsule(
+                    radius=radius,
+                    height=height,
+                    target_object=obj,
+                )
+            else:
+                half_height = height * 0.5
+                for v in mesh.vertices:
+                    dir_xy = v.co.xy.normalized()
+                    norm_len_xy = min(v.co.xy.length / r0, 1.0)  # normalized distance from z axis
+                    new_cap_z = (1 - norm_len_xy**2) ** (1 / 2) * radius
+                    dir_xy *= radius * norm_len_xy
+                    sign_z = -1.0 if v.co.z < 0 else 1.0
+                    v.co = [dir_xy.x, dir_xy.y, sign_z * (half_height + new_cap_z)]
         mesh.update()
+        bpy.context.view_layer.update()
 
 
 def _get_rigid_name(prop):

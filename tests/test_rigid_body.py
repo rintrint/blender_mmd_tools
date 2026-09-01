@@ -422,6 +422,33 @@ class TestRigidBody(unittest.TestCase):
 
         print("✓ Rigid body size calculation test passed")
 
+    def test_rigid_body_capsule_zero_radius_recovery(self):
+        """Test resizing a capsule whose current radius is zero"""
+        self._enable_mmd_tools()
+
+        model = self._create_test_model()
+        rigid_obj = FnRigidBody.new_rigid_body_object(self.context, model.rigidGroupObject())
+        FnRigidBody.setup_rigid_body_object(
+            obj=rigid_obj,
+            shape_type=2,
+            location=Vector((0, 0, 0)),
+            rotation=Euler((0, 0, 0)),
+            size=Vector((0, 1, 0)),
+            dynamics_type=0,
+            name="ZeroRadiusCapsule",
+        )
+
+        self.assertAlmostEqual(rigid_obj.mmd_rigid.size[0], 0.0, places=6)
+        self.assertAlmostEqual(rigid_obj.mmd_rigid.size[1], 1.0, places=6)
+
+        rigid_obj.mmd_rigid.size = (0.25, 1.0, 0.0)
+        bpy.context.view_layer.update()
+
+        self.assertAlmostEqual(rigid_obj.mmd_rigid.size[0], 0.25, places=6)
+        self.assertAlmostEqual(rigid_obj.mmd_rigid.size[1], 1.0, places=6)
+
+        print("✓ Zero-radius capsule recovery test passed")
+
     def test_joint_creation_basic(self):
         """Test basic joint creation functionality"""
         self._enable_mmd_tools()

@@ -26,6 +26,9 @@ class MMDMaterialSorter(PT_ProductionPanelBase, bpy.types.Panel):
         tb1 = tb.column(align=True)
         tb1.operator("mmd_tools.move_material_up", text="", icon="TRIA_UP")
         tb1.operator("mmd_tools.move_material_down", text="", icon="TRIA_DOWN")
+        tb.separator()
+        tb1 = tb.column(align=True)
+        tb1.operator("mmd_tools.sort_materials", text="", icon="SORTALPHA")
 
 
 class MMD_TOOLS_UL_Materials(bpy.types.UIList):
