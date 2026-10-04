@@ -55,7 +55,7 @@ class TestBone(unittest.TestCase):
             addon_enable = bpy.ops.wm.addon_enable if "addon_enable" in dir(bpy.ops.wm) else bpy.ops.preferences.addon_enable
             addon_enable(module="bl_ext.blender_org.mmd_tools")
 
-    def __create_test_armature(self):
+    def __create_test_armature(self, setup_special_collections=True):
         """Create a test armature with some bones for testing"""
         # Create armature object
         armature_data = bpy.data.armatures.new("test_armature")
@@ -100,7 +100,8 @@ class TestBone(unittest.TestCase):
         bpy.ops.object.mode_set(mode="OBJECT")
 
         # Setup special bone collections
-        FnBone.setup_special_bone_collections(armature_object)
+        if setup_special_collections:
+            FnBone.setup_special_bone_collections(armature_object)
 
         return armature_object
 
@@ -365,6 +366,88 @@ class TestBone(unittest.TestCase):
 
         # Check that dirty flag was cleared
         self.assertFalse(mmd_bone.is_additional_transform_dirty, "Dirty flag should be cleared")
+
+    def __assert_additional_transform_helpers(self, armature):
+        for prefix, collection_name, bone_type in (("_dummy_", "mmd_dummy", "DUMMY"), ("_shadow_", "mmd_shadow", "SHADOW")):
+            bone_name = prefix + "左腕"
+            bone = armature.data.bones[bone_name]
+            self.assertFalse(bone.use_deform)
+            self.assertIn(collection_name, bone.collections)
+            self.assertTrue(armature.pose.bones[bone_name].is_mmd_shadow_bone)
+            self.assertEqual(armature.pose.bones[bone_name].mmd_shadow_bone_type, bone_type)
+            collection = armature.data.collections[collection_name]
+            self.assertEqual(collection.get("mmd_tools"), "special collection")
+            self.assertFalse(collection.is_visible)
+
+    def test_apply_additional_transformation_without_special_collections(self):
+        """Rotate + and Move + work on an ordinary, unconverted armature."""
+        for transform in ("rotation", "location"):
+            with self.subTest(transform=transform):
+                armature = self.__create_test_armature(setup_special_collections=False)
+                user_collection = armature.data.collections.new("User Bones")
+                user_collection.assign(armature.data.bones["左腕"])
+                self.assertNotIn("mmd_dummy", armature.data.collections)
+                self.assertNotIn("mmd_shadow", armature.data.collections)
+
+                mmd_bone = armature.pose.bones["左腕"].mmd_bone
+                mmd_bone.additional_transform_bone = "全ての親"
+                mmd_bone.additional_transform_influence = 0.5
+                setattr(mmd_bone, "has_additional_" + transform, True)
+
+                FnBone.apply_additional_transformation(armature)
+
+                self.__assert_additional_transform_helpers(armature)
+                constraint = armature.pose.bones["左腕"].constraints["mmd_additional_" + transform]
+                self.assertEqual(constraint.target, armature)
+                self.assertEqual(constraint.subtarget, "_shadow_左腕")
+                self.assertFalse(mmd_bone.is_additional_transform_dirty)
+                self.assertIn("左腕", user_collection.bones)
+                self.assertTrue(user_collection.is_visible)
+
+    def test_apply_additional_transformation_repairs_incomplete_helpers(self):
+        """Repair helpers left uninitialized when collection assignment failed."""
+        for helper_names in (("_dummy_左腕",), ("_dummy_左腕", "_shadow_左腕")):
+            with self.subTest(helper_names=helper_names):
+                armature = self.__create_test_armature(setup_special_collections=False)
+                bpy.ops.object.mode_set(mode="EDIT")
+                for name in helper_names:
+                    bone = armature.data.edit_bones.new(name)
+                    bone.head = (0, 0, 0)
+                    bone.tail = (0, 0, 1)
+                bpy.ops.object.mode_set(mode="OBJECT")
+                for name in helper_names:
+                    self.assertTrue(armature.data.bones[name].use_deform)
+                    self.assertEqual(len(armature.data.bones[name].collections), 0)
+                FnBone.setup_special_bone_collections(armature)
+                mmd_bone = armature.pose.bones["左腕"].mmd_bone
+                mmd_bone.additional_transform_bone = "全ての親"
+                mmd_bone.additional_transform_influence = 0.5
+                mmd_bone.has_additional_rotation = True
+
+                FnBone.apply_additional_transformation(armature)
+                self.__assert_additional_transform_helpers(armature)
+                bone_names = set(armature.data.bones.keys())
+                FnBone.apply_additional_transformation(armature)
+                self.__assert_additional_transform_helpers(armature)
+                self.assertEqual(set(armature.data.bones.keys()), bone_names)
+
+    def test_apply_additional_transformation_restores_deleted_collection(self):
+        """Reapplying after deleting either special collection reassigns helpers."""
+        for collection_name in ("mmd_dummy", "mmd_shadow"):
+            with self.subTest(collection_name=collection_name):
+                armature = self.__create_test_armature()
+                mmd_bone = armature.pose.bones["左腕"].mmd_bone
+                mmd_bone.additional_transform_bone = "全ての親"
+                mmd_bone.additional_transform_influence = 0.5
+                mmd_bone.has_additional_rotation = True
+                FnBone.apply_additional_transformation(armature)
+                bone_names = set(armature.data.bones.keys())
+                armature.data.collections.remove(armature.data.collections[collection_name])
+
+                FnBone.apply_additional_transformation(armature)
+
+                self.__assert_additional_transform_helpers(armature)
+                self.assertEqual(set(armature.data.bones.keys()), bone_names)
 
     def test_update_additional_transform_influence(self):
         """Test updating additional transform influence"""

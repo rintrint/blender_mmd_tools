@@ -409,6 +409,8 @@ class FnBone:
 
     @staticmethod
     def apply_additional_transformation(armature_object: bpy.types.Object):
+        FnBone.setup_special_bone_collections(armature_object)
+
         def __is_dirty_bone(b):
             if b.is_mmd_shadow_bone:
                 return False
@@ -563,14 +565,14 @@ class _AT_ShadowBoneCreate:
             return
 
         dummy_bone_name = self.__dummy_bone_name
-        dummy = edit_bones.get(dummy_bone_name, None) or FnBone.set_edit_bone_to_dummy(edit_bones.new(name=dummy_bone_name))
+        dummy = FnBone.set_edit_bone_to_dummy(edit_bones.get(dummy_bone_name, None) or edit_bones.new(name=dummy_bone_name))
         dummy.parent = target_bone
         dummy.head = target_bone.head
         dummy.tail = dummy.head + bone.tail - bone.head
         dummy.roll = bone.roll
 
         shadow_bone_name = self.__shadow_bone_name
-        shadow = edit_bones.get(shadow_bone_name, None) or FnBone.set_edit_bone_to_shadow(edit_bones.new(name=shadow_bone_name))
+        shadow = FnBone.set_edit_bone_to_shadow(edit_bones.get(shadow_bone_name, None) or edit_bones.new(name=shadow_bone_name))
         shadow.parent = target_bone.parent
         shadow.head = dummy.head
         shadow.tail = dummy.tail
